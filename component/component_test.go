@@ -12,7 +12,7 @@ func TestSimpleComponent_GetNotificationCh(t *testing.T) {
 		Name           string
 		cURI           string
 		container      *Container
-		state          state
+		stage          stage
 		ctx            context.Context
 		notificationCh chan interface{}
 		MessageCh      chan interface{}
@@ -31,7 +31,7 @@ func TestSimpleComponent_GetNotificationCh(t *testing.T) {
 				Name:           tt.fields.Name,
 				cURI:           tt.fields.cURI,
 				container:      tt.fields.container,
-				state:          tt.fields.state,
+				stage:          tt.fields.stage,
 				notificationCh: tt.fields.notificationCh,
 				MessageCh:      tt.fields.MessageCh,
 				mutex:          tt.fields.mutex,
