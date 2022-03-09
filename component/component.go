@@ -2,6 +2,7 @@ package component
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,7 +10,11 @@ import (
 	"time"
 )
 
-type stage int
+type (
+	stage  int
+	state  int
+	signal int
+)
 
 //go:generate stringer -type=stage
 const (
@@ -18,8 +23,8 @@ const (
 	Preinitialized
 	Initializing
 	Initialized
-	MessageReceiverStarted
 	Starting
+	Restarting
 	Started
 	Stopping
 	Stopped
@@ -27,15 +32,22 @@ const (
 	Teareddown
 	// Error stages follow
 	Aborting
-	Restarting
 )
-
-type state int
 
 //go:generate stringer -type=state
 const (
-	Active state = iota
-	InActive
+	InActive state = iota
+	Active
+)
+
+//go:generate stringer -type=signal
+const (
+	EnablePeerMessaging signal = iota
+	DisablePeerMessaging
+	Shutdown
+	ShutdownAfter
+	Cancel
+	CancelAfter
 )
 
 type Component interface {
@@ -51,16 +63,19 @@ type Component interface {
 	Init(context.Context) error
 	Start(context.Context) error
 	Stop(context.Context) error
-	MessageReceiver(context.Context) error
+
+	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue
+	// to receive messages until the returned notification channel is closed.
+	SetInbox(chan func() (context.Context, interface{})) (<-chan struct{}, error)
+	getInbox() chan func() (context.Context, interface{})
+
+	getMmux() chan func() (context.Context, interface{})
 
 	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic
 	// for exponential backoff to return the delay duration between restarts.
 	IsRestartableWithDelay() (bool, time.Duration)
 
 	GetContainer() *Container
-
-	Send(context.Context, interface{}) error
-	GetNotificationCh() chan interface{}
 
 	fmt.Stringer
 	http.Handler
@@ -73,21 +88,25 @@ type SimpleComponent struct {
 	stage     stage
 	state     state
 
-	notificationCh chan interface{}
-	MessageCh      chan interface{}
+	// message mux
+	mmux chan func() (context.Context, interface{})
+
+	inbox              chan func() (context.Context, interface{})
+	isMessagingStopped chan struct{}
 
 	mutex *sync.Mutex
 }
 
 func (d *SimpleComponent) preInit() {
 	d.mutex = &sync.Mutex{}
-	d.notificationCh = make(chan interface{}, 1)
-	d.MessageCh = make(chan interface{}, 1)
+	d.mmux = make(chan func() (context.Context, interface{}), 1)
 }
 
 func (d *SimpleComponent) tearDown() {
-	close(d.MessageCh)
-	close(d.notificationCh)
+	if d.isMessagingStopped != nil {
+		close(d.isMessagingStopped)
+	}
+	close(d.mmux)
 }
 
 func (d *SimpleComponent) String() string {
@@ -97,6 +116,12 @@ func (d *SimpleComponent) String() string {
 func (d *SimpleComponent) setStage(s stage) {
 	log.Println(d, s)
 	d.stage = s
+
+	if d.stage >= Initialized && d.stage <= Started {
+		d.setState(Active)
+	} else {
+		d.setState(InActive)
+	}
 }
 
 func (d *SimpleComponent) State() state {
@@ -114,8 +139,6 @@ func (d *SimpleComponent) Stage() stage {
 
 func (d *SimpleComponent) Init(context.Context) error { return nil }
 
-func (d *SimpleComponent) MessageReceiver(context.Context) error { return nil }
-
 func (d *SimpleComponent) Start(context.Context) error { return nil }
 
 func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
@@ -128,10 +151,22 @@ func (d *SimpleComponent) GetContainer() *Container {
 	return d.container
 }
 
-func (d *SimpleComponent) Send(context.Context, interface{}) error { return nil }
+func (d *SimpleComponent) getMmux() chan func() (context.Context, interface{}) {
+	return d.mmux
+}
 
-func (d *SimpleComponent) GetNotificationCh() chan interface{} {
-	return d.notificationCh
+func (d *SimpleComponent) SetInbox(inbox chan func() (context.Context, interface{})) (<-chan struct{}, error) {
+	if inbox == nil {
+		return nil, errors.New("SetMessageReader was passed an empty messaging channel")
+	}
+
+	d.inbox = inbox
+	d.isMessagingStopped = make(chan struct{})
+	return d.isMessagingStopped, nil
+}
+
+func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}) {
+	return d.inbox
 }
 
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {

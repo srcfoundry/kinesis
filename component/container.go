@@ -39,6 +39,8 @@ func (c *Container) componentLifecycleFSM(comp Component) {
 		fallthrough
 	case Preinitializing:
 		comp.preInit()
+		ctx := context.Background()
+		go c.startMmux(ctx, comp)
 		comp.setStage(Preinitialized)
 		fallthrough
 	case Preinitialized:
@@ -56,11 +58,7 @@ func (c *Container) componentLifecycleFSM(comp Component) {
 		} else {
 			comp.setStage(Initialized)
 		}
-	case Initialized:
-		ctx := context.Background()
-		go c.startMessageReceiver(ctx, comp)
-		comp.setStage(MessageReceiverStarted)
-	case MessageReceiverStarted, Restarting, Starting:
+	case Initialized, Restarting, Starting:
 		comp.setStage(Starting)
 		ctx := context.Background()
 		go c.startComponent(ctx, comp)
@@ -73,15 +71,26 @@ func (c *Container) componentLifecycleFSM(comp Component) {
 	}
 }
 
-func (c *Container) startMessageReceiver(ctx context.Context, comp Component) {
-	defer func(comp Component) {
-		c.componentLifecycleFSM(comp)
-	}(comp)
+func (c *Container) startMmux(ctx context.Context, comp Component) {
+	defer func(ctx context.Context, comp Component) {
+		if comp.State() != Active {
+			return
+		}
+		c.startMmux(ctx, comp)
+	}(ctx, comp)
 
-	err := comp.MessageReceiver(ctx)
-	if err != nil {
-		comp.setStage(Aborting)
-		comp.setStage(Tearingdown)
+	for msgFunc := range comp.getMmux() {
+		_, msg := msgFunc()
+		switch msg.(type) {
+		case signal:
+			// handle signal messages here
+		default:
+			inbox := comp.getInbox()
+			if inbox == nil {
+				continue
+			}
+			inbox <- msgFunc
+		}
 	}
 }
 
