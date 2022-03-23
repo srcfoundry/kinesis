@@ -3,36 +3,83 @@ package component
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
+var runOnce sync.Once
+
 type Container struct {
 	SimpleComponent
+	signalCh    chan os.Signal
 	cComponents map[string]cComponent
 }
 
-func (c *Container) Init(ctx context.Context) {
+func (c *Container) Init(ctx context.Context) error {
 	c.cComponents = make(map[string]cComponent)
+	runOnce.Do(func() {
+		c.signalCh = make(chan os.Signal, 1)
+		signal.Notify(c.signalCh, os.Interrupt)
+	})
+	return nil
+}
+
+func (c *Container) Start(ctx context.Context) error {
+	for {
+		select {
+		// proceed to shutdown container if received an OS interrupt signal.
+		case <-c.signalCh:
+			shutdownErrCh := make(chan error, 1)
+			notification := func() (context.Context, interface{}, chan<- error) {
+				// TODO: later change it to a context with timeout
+				return context.TODO(), Shutdown, shutdownErrCh
+			}
+
+			c.Notify(notification)
+
+			shutdownErr, isErrChOpen := <-shutdownErrCh
+			if shutdownErr == nil && !isErrChOpen {
+				log.Println("Shutdown notification was successfully sent to", c.GetName())
+				return nil
+			}
+
+		case <-c.inbox:
+		}
+	}
 }
 
 func (c *Container) Add(comp Component) error {
+	if comp != nil && len(comp.GetName()) <= 0 {
+		log.Fatalln("Component name cannot be empty")
+	}
+
+	c.componentLifecycleFSM(context.TODO(), comp)
+
 	cComm := cComponent{}
 	err := c.toCanonical(comp, &cComm)
 	if err != nil {
 		log.Println(comp, "failed to convert to canonical type due to", err.Error())
 		return err
 	}
-	c.componentLifecycleFSM(comp)
+
+	if _, found := c.cComponents[comp.GetName()]; found {
+		err := errors.New("activating component with same name " + comp.GetName())
+		log.Println("failed to add component due to", err.Error())
+		return err
+	}
+	c.cComponents[comp.GetName()] = cComm
+
 	return nil
 }
 
-// componentLifecycleFSM is a fsm for handling various stages of a component.
-func (c *Container) componentLifecycleFSM(comp Component) {
+// componentLifecycleFSM is a FSM for handling various stages of a component.
+func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
 	switch comp.Stage() {
 	case Submitted:
 		comp.setStage(Preinitializing)
@@ -47,7 +94,7 @@ func (c *Container) componentLifecycleFSM(comp Component) {
 		comp.setStage(Initializing)
 		ctx := context.Background()
 		defer func(comp Component) {
-			c.componentLifecycleFSM(comp)
+			c.componentLifecycleFSM(context.TODO(), comp)
 		}(comp)
 
 		// TODO: test for init new component from within init of a component
@@ -62,15 +109,27 @@ func (c *Container) componentLifecycleFSM(comp Component) {
 		comp.setStage(Starting)
 		ctx := context.Background()
 		go c.startComponent(ctx, comp)
-		comp.setStage(Started)
 	case Started:
 		// do nothing
+	case Stopping:
+		err := comp.Stop(ctx)
+		if err != nil {
+			return err
+		}
+		comp.setStage(Stopped)
+		fallthrough
+	case Stopped:
+		fallthrough
 	case Tearingdown:
 		comp.tearDown()
 		comp.setStage(Teareddown)
 	}
+
+	return nil
 }
 
+// startMmux is the main routine which blocks and receives all types of messages which are sent to a component. Components which have been
+// preinitialized successfully, would each have its own message handlers started as separate go routines.
 func (c *Container) startMmux(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		if comp.State() != Active {
@@ -80,10 +139,19 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	}(ctx, comp)
 
 	for msgFunc := range comp.getMmux() {
-		_, msg := msgFunc()
-		switch msg.(type) {
-		case signal:
-			// handle signal messages here
+		msgCtx, msg, errCh := msgFunc()
+
+		switch msgType := msg.(type) {
+		case controlMsg:
+			switch msgType {
+			case Shutdown:
+				comp.setStage(Stopping)
+				err := c.componentLifecycleFSM(msgCtx, comp)
+				if err != nil {
+					errCh <- err
+				}
+				close(errCh)
+			}
 		default:
 			inbox := comp.getInbox()
 			if inbox == nil {
@@ -96,57 +164,63 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(comp Component) {
-		c.componentLifecycleFSM(comp)
+		c.componentLifecycleFSM(ctx, comp)
 	}(comp)
 
 	err := comp.Start(ctx)
 	if err != nil {
+		log.Println(comp, "encountered following error while starting.", err)
 		isRestartable, delay := comp.IsRestartableWithDelay()
-		if isRestartable {
-			comp.setStage(Restarting)
-			log.Println(comp, "to restart after", delay)
-			time.Sleep(delay)
+		if !isRestartable {
+			log.Println(comp, "configured not to restart")
+			return
 		}
+		if delay <= time.Duration(0) {
+			delay = 5 * time.Second
+		}
+		comp.setStage(Restarting)
+		log.Println(comp, "to restart after", delay)
+		time.Sleep(delay)
+		return
 	}
+	comp.setStage(Started)
 }
 
 // toCanonical enhances the component and assigns it to the passed cComponent type
 func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
-
-	cType := reflect.TypeOf(comp)
-	if cType == nil {
-		log.Fatalln("Cannot determine type for", comp)
-	}
-
-	cTypeVal := reflect.ValueOf(comp)
-
-	var (
-		cName, cURI    string
-		ok             bool
-		simpleCompType *SimpleComponent
-	)
-
-	if simpleCompType, ok = comp.(*SimpleComponent); !ok {
-		return errors.New(fmt.Sprintln("Cannot initialize non SimpleComponent type", comp))
-	}
-
 	// assign reference of container to the component getting added.
-	simpleCompType.container = c
+	if comp != c {
+		comp.setContainer(c)
+	}
 
-	cName = simpleCompType.Name
+	cName := comp.GetName()
 	if len(cName) <= 0 {
-		// if component name is empty, derive it from the component type
-		cName = cType.Name()
+		log.Fatalln("Component name cannot be empty")
 	}
 	cName = strings.ToLower(cName)
+	cComp.cName = cName
 
-	// proceeding to assign URI for the component
-	cURI = c.cURI + "/" + cName
-	simpleCompType.cURI = cURI
+	// proceeding to assign URI for the component. for that we would need to travserse all the way to top container.
+	rootC := c.GetContainer()
+	paths := []string{}
+	for rootC != nil {
+		paths = append(paths, rootC.GetName())
+		rootC = rootC.GetContainer()
+	}
+
+	cURI := "/"
+	if len(paths) > 0 {
+		for i := len(paths) - 1; i >= 0; i-- {
+			cURI += paths[i] + "/"
+		}
+	}
+	cURI += cName
 
 	handlers := map[string]func(http.ResponseWriter, *http.Request){}
+	cType := reflect.TypeOf(comp)
+	cTypeVal := reflect.ValueOf(comp)
 
-	// derive the http routes within the component
+	//derive the http routes within the component
 	for i := 0; i < cTypeVal.NumMethod(); i++ {
 		methodVal := cTypeVal.Method(i)
 
@@ -171,8 +245,13 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	return nil
 }
 
+func (c *Container) GetComponent() {
+
+}
+
 // canonical Component which enhances the component
 type cComponent struct {
+	cName     string
 	comp      Component
 	cHandlers map[string]func(http.ResponseWriter, *http.Request)
 }

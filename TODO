@@ -1,0 +1,2 @@
+> check mechanism for returning copy of initialized component from container. Even though we could have new instances of an exported component type, only the container would 
+have the component initialized withih the app context.
