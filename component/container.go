@@ -129,7 +129,6 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		comp.tearDown()
 		comp.setStage(Teareddown)
 	}
-
 	return nil
 }
 
@@ -156,6 +155,9 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 					errCh <- err
 				}
 				close(errCh)
+				if err == nil {
+					return
+				}
 			}
 		default:
 			inbox := comp.getInbox()
@@ -192,8 +194,8 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 
 // toCanonical enhances the component and assigns it to the passed cComponent type
 func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
-	// assign reference of container to the component getting added.
-	if comp != c {
+	// assign reference of container to the component getting added only if the names do not match.
+	if comp.GetName() != c.GetName() {
 		comp.setContainer(c)
 	}
 
@@ -263,8 +265,8 @@ func (c *Container) Stop(ctx context.Context) error {
 		if cComp, found = c.cComponents[cName]; !found || cComp.comp == nil {
 			log.Println(cName, "component no longer found within container", c.GetName())
 			// after iterating in LIFO order, the current container would be one left in the list. ignore sending Shutdown to itself.
-			// so maintaining check if the current component cComp.comp != c
-		} else if cComp.comp != c {
+			// so maintaining check if the current component cComp.comp.GetName() != c.GetName()
+		} else if cComp.comp.GetName() != c.GetName() {
 			log.Println("sending", Shutdown, "signal to", cName)
 			errCh := make(chan error)
 			cComp.comp.Notify(func() (context.Context, interface{}, chan<- error) {
@@ -283,6 +285,7 @@ func (c *Container) Stop(ctx context.Context) error {
 		}
 	}
 
+	defer close(c.signalCh)
 	return nil
 }
 

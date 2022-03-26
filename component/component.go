@@ -88,7 +88,7 @@ type Component interface {
 	setContainer(*Container)
 	GetContainer() *Container
 
-	getLock() *sync.Mutex
+	GetLock() *sync.Mutex
 
 	fmt.Stringer
 	http.Handler
@@ -121,6 +121,9 @@ func (d *SimpleComponent) preInit() {
 }
 
 func (d *SimpleComponent) tearDown() {
+	d.GetLock().Lock()
+	defer d.GetLock().Unlock()
+
 	if d.isMessagingStopped != nil {
 		close(d.isMessagingStopped)
 	}
@@ -167,6 +170,7 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 		d.subscribers = make(map[string]chan<- interface{})
 	}
 	d.subscribers[subscriber] = subscriberCh
+	log.Println(subscriber, "successfully subscribed to", d.GetName())
 	return nil
 }
 
@@ -234,11 +238,14 @@ func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, 
 	return d.inbox
 }
 
-func (d *SimpleComponent) getLock() *sync.Mutex {
+func (d *SimpleComponent) GetLock() *sync.Mutex {
 	return d.mutex
 }
 
 func (d *SimpleComponent) Notify(notification func() (context.Context, interface{}, chan<- error)) {
+	d.GetLock().Lock()
+	defer d.GetLock().Unlock()
+
 	mMux := d.getMmux()
 	if mMux == nil {
 		err := errors.New("message mux not initialized for " + d.GetName())
