@@ -1,6 +1,10 @@
 package component
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+)
 
 func TestContainer_Add(t *testing.T) {
 	c := &Container{}
@@ -23,6 +27,7 @@ func TestContainer_Add(t *testing.T) {
 			wantErr: false,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
@@ -31,4 +36,26 @@ func TestContainer_Add(t *testing.T) {
 			}
 		})
 	}
+
+	subscribe, errCh := make(chan interface{}, 1), make(chan error, 1)
+	c.Subscribe("testS", subscribe)
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		c.Notify(func() (context.Context, interface{}, chan<- error) {
+			return nil, Shutdown, errCh
+		})
+	}()
+
+outer:
+	for {
+		select {
+		case notification := <-subscribe:
+			if notification == Stopped {
+				break outer
+			}
+		case <-errCh:
+		}
+	}
+
 }

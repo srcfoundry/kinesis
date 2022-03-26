@@ -36,7 +36,7 @@ const (
 
 //go:generate stringer -type=state
 const (
-	InActive state = iota
+	Inactive state = iota
 	Active
 )
 
@@ -62,26 +62,33 @@ type Component interface {
 	preInit()
 	tearDown()
 
+	// Init method should include logic which finishes with reasonable amount of time, since it blocks initializing other components for the application unless this has finished executing.
+	// Exceptions to this could be infra components which handle database or messaging requirements, which other components might be dependent for proper functioning.
 	Init(context.Context) error
 	Start(context.Context) error
 	Stop(context.Context) error
 
-	// Use Notify as a primary means to asynchronously send any type of message to the component, wrapped as a function.
+	// Notify could be used as a primary means to asynchronously send any type of message to a component, wrapped as a function. Once the message is processed by the receiving component, proceed to
+	// close the error channel within the receiving component, to indicate to the sender that it had finished processing the message. In event of any error, the receiving component could
+	// pass along the error on the error channel before closing the channel.
 	Notify(func() (context.Context, interface{}, chan<- error))
 
-	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue
-	// to receive messages until the returned notification channel is closed.
+	// Subscribers could pass a channel to receive state/stage notifications of components it might be interested
+	Subscribe(subscriber string, subscriberCh chan<- interface{}) error
+
+	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue to receive messages until the returned notification channel is closed.
 	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
 	getInbox() chan func() (context.Context, interface{}, chan<- error)
 
 	getMmux() chan func() (context.Context, interface{}, chan<- error)
 
-	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic
-	// for exponential backoff to return the delay duration between restarts.
+	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic for exponential backoff to return the delay duration between restarts.
 	IsRestartableWithDelay() (bool, time.Duration)
 
 	setContainer(*Container)
 	GetContainer() *Container
+
+	getLock() *sync.Mutex
 
 	fmt.Stringer
 	http.Handler
@@ -100,6 +107,8 @@ type SimpleComponent struct {
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
 	mutex              *sync.Mutex
+
+	subscribers map[string]chan<- interface{}
 }
 
 func (d *SimpleComponent) GetName() string {
@@ -125,11 +134,12 @@ func (d *SimpleComponent) String() string {
 func (d *SimpleComponent) setStage(s stage) {
 	log.Println(d, s)
 	d.stage = s
+	d.notifySubscribers(s)
 
 	if d.stage >= Initialized && d.stage <= Started {
 		d.setState(Active)
 	} else {
-		d.setState(InActive)
+		d.setState(Inactive)
 	}
 }
 
@@ -140,6 +150,7 @@ func (d *SimpleComponent) State() state {
 func (d *SimpleComponent) setState(s state) {
 	if d.state != s {
 		log.Println(d, s)
+		d.notifySubscribers(s)
 	}
 	d.state = s
 }
@@ -148,14 +159,48 @@ func (d *SimpleComponent) Stage() stage {
 	return d.stage
 }
 
+func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
+	if _, found := d.subscribers[subscriber]; found {
+		return errors.New("found " + subscriber + " already subscribed to " + d.GetName())
+	}
+	if d.subscribers == nil {
+		d.subscribers = make(map[string]chan<- interface{})
+	}
+	d.subscribers[subscriber] = subscriberCh
+	return nil
+}
+
+func (d *SimpleComponent) notifySubscribers(notification interface{}) {
+	for _, subsCh := range d.subscribers {
+		subsCh <- notification
+	}
+}
+
+// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) Init(context.Context) error { return nil }
 
-func (d *SimpleComponent) Start(context.Context) error { return nil }
+// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
+func (d *SimpleComponent) Start(context.Context) error {
+	inbox := d.getInbox()
+	if inbox == nil {
+		return nil
+	}
 
+	for msgFunc := range inbox {
+		// process msgFunc
+		_, msg, _ := msgFunc()
+		fmt.Println(msg)
+	}
+
+	return nil
+}
+
+// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
 	return true, 3 * time.Second
 }
 
+// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) Stop(context.Context) error { return nil }
 
 func (d *SimpleComponent) setContainer(c *Container) {
@@ -187,6 +232,10 @@ func (d *SimpleComponent) SetInbox(inbox chan func() (context.Context, interface
 
 func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, chan<- error) {
 	return d.inbox
+}
+
+func (d *SimpleComponent) getLock() *sync.Mutex {
+	return d.mutex
 }
 
 func (d *SimpleComponent) Notify(notification func() (context.Context, interface{}, chan<- error)) {

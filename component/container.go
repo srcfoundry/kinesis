@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -17,7 +18,9 @@ var runOnce sync.Once
 
 type Container struct {
 	SimpleComponent
-	signalCh    chan os.Signal
+	signalCh chan os.Signal
+	// slice to maintain the order of components being added
+	components  []string
 	cComponents map[string]cComponent
 }
 
@@ -25,7 +28,7 @@ func (c *Container) Init(ctx context.Context) error {
 	c.cComponents = make(map[string]cComponent)
 	runOnce.Do(func() {
 		c.signalCh = make(chan os.Signal, 1)
-		signal.Notify(c.signalCh, os.Interrupt)
+		signal.Notify(c.signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	})
 	return nil
 }
@@ -33,7 +36,7 @@ func (c *Container) Init(ctx context.Context) error {
 func (c *Container) Start(ctx context.Context) error {
 	for {
 		select {
-		// proceed to shutdown container if received an OS interrupt signal.
+		// proceed to shutdown container if system interrupt is received.
 		case <-c.signalCh:
 			shutdownErrCh := make(chan error, 1)
 			notification := func() (context.Context, interface{}, chan<- error) {
@@ -74,6 +77,7 @@ func (c *Container) Add(comp Component) error {
 		return err
 	}
 	c.cComponents[comp.GetName()] = cComm
+	c.components = append(c.components, comp.GetName())
 
 	return nil
 }
@@ -109,6 +113,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		comp.setStage(Starting)
 		ctx := context.Background()
 		go c.startComponent(ctx, comp)
+		comp.setStage(Started)
 	case Started:
 		// do nothing
 	case Stopping:
@@ -183,7 +188,6 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		time.Sleep(delay)
 		return
 	}
-	comp.setStage(Started)
 }
 
 // toCanonical enhances the component and assigns it to the passed cComponent type
@@ -240,6 +244,43 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	cComp.comp = comp
 	if len(handlers) > 0 {
 		cComp.cHandlers = handlers
+	}
+
+	return nil
+}
+
+func (c *Container) Stop(ctx context.Context) error {
+	// proceed to stop components in LIFO order
+	last := len(c.components) - 1
+
+	for last >= 0 {
+		cName := c.components[last]
+		var (
+			cComp cComponent
+			found bool
+		)
+
+		if cComp, found = c.cComponents[cName]; !found || cComp.comp == nil {
+			log.Println(cName, "component no longer found within container", c.GetName())
+			// after iterating in LIFO order, the current container would be one left in the list. ignore sending Shutdown to itself.
+			// so maintaining check if the current component cComp.comp != c
+		} else if cComp.comp != c {
+			log.Println("sending", Shutdown, "signal to", cName)
+			errCh := make(chan error)
+			cComp.comp.Notify(func() (context.Context, interface{}, chan<- error) {
+				return context.TODO(), Shutdown, errCh
+			})
+			err := <-errCh
+			if err != nil {
+				return err
+			}
+		}
+
+		c.components = c.components[:last]
+		last = len(c.components) - 1
+		if found {
+			delete(c.cComponents, cName)
+		}
 	}
 
 	return nil
