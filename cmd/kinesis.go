@@ -19,7 +19,6 @@ func main() {
 	app.Subscribe("main.subscriber", subscribe)
 
 	for notification := range subscribe {
-		log.Println(notification)
 		if notification == component.Stopped {
 			log.Println("Exiting")
 			os.Exit(0)
