@@ -90,12 +90,20 @@ type Component interface {
 
 	GetLock() *sync.Mutex
 
+	setHash(uint64)
+	Hash() uint64
+
+	setEtag(string)
+	GetEtag() string
+
 	fmt.Stringer
 	http.Handler
 }
 
 type SimpleComponent struct {
-	Hash      uint64 `hash:"ignore"`
+	Etag string
+	hash uint64
+
 	Name      string
 	container *Container
 	stage     stage
@@ -160,6 +168,22 @@ func (d *SimpleComponent) setState(s state) {
 
 func (d *SimpleComponent) Stage() stage {
 	return d.stage
+}
+
+func (d *SimpleComponent) setHash(hash uint64) {
+	d.hash = hash
+}
+
+func (d *SimpleComponent) Hash() uint64 {
+	return d.hash
+}
+
+func (d *SimpleComponent) setEtag(etag string) {
+	d.Etag = etag
+}
+
+func (d *SimpleComponent) GetEtag() string {
+	return d.Etag
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {

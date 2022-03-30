@@ -1,8 +1,11 @@
 package component
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +15,9 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/mitchellh/hashstructure/v2"
 )
 
 var runOnce sync.Once
@@ -38,6 +44,8 @@ func (c *Container) Start(ctx context.Context) error {
 		select {
 		// proceed to shutdown container if system interrupt is received.
 		case <-c.signalCh:
+			// c.GetLock().Lock()
+			// defer c.GetLock().Unlock()
 			shutdownErrCh := make(chan error, 1)
 			notification := func() (context.Context, interface{}, chan<- error) {
 				// TODO: later change it to a context with timeout
@@ -51,7 +59,6 @@ func (c *Container) Start(ctx context.Context) error {
 				log.Println("Shutdown notification was successfully sent to", c.GetName())
 				return nil
 			}
-
 		case <-c.inbox:
 		}
 	}
@@ -289,8 +296,56 @@ func (c *Container) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (c *Container) GetComponent() {
+// GetComponentCopy returns a copy of the component within a container. Only exported field values would be copied over. Advisable not to mark pointer
+// fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
+// be copied over.
+func (c *Container) GetComponentCopy(name string) (Component, error) {
+	var (
+		cComp cComponent
+		found bool
+	)
 
+	c.GetLock().Lock()
+	if cComp, found = c.cComponents[name]; !found {
+		return nil, errors.New(fmt.Sprintln("unable to find component", name, "within", c.GetName()))
+	}
+	c.GetLock().Unlock()
+
+	comp := cComp.comp
+	if comp == nil {
+		return nil, errors.New("unable to find component type within cComponent")
+	}
+	comp.GetLock().Lock()
+	defer comp.GetLock().Unlock()
+
+	// compute hash of the component object and compare with existing hash
+	newHash, err := hashstructure.Hash(comp, hashstructure.FormatV2, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// assign new etag if component instance hash has changed. this is required in order to resolve conflicts arising
+	// due to concurrent updates through messages.
+	if newHash != comp.Hash() {
+		comp.setHash(newHash)
+		etag := uuid.New()
+		comp.setEtag(etag.String())
+	}
+
+	compType := reflect.TypeOf(comp).Elem()
+	compVal := reflect.ValueOf(comp).Elem().Interface()
+
+	newCTypeValue := reflect.New(compType)
+	newVal := newCTypeValue.Interface()
+
+	copyStruct(newVal, compVal)
+	return newVal.(Component), nil
+}
+
+func copyStruct(dest, src interface{}) {
+	buf := new(bytes.Buffer)
+	gob.NewEncoder(buf).Encode(src)
+	gob.NewDecoder(buf).Decode(dest)
 }
 
 // canonical Component which enhances the component
