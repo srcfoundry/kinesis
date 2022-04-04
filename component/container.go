@@ -43,12 +43,17 @@ func (c *Container) Start(ctx context.Context) error {
 	for {
 		select {
 		// proceed to shutdown container if system interrupt is received.
-		case <-c.signalCh:
+		case _, ok := <-c.signalCh:
+			if !ok {
+				log.Println("signalCh closed for", c.GetName())
+				return nil
+			}
 			// c.GetLock().Lock()
 			// defer c.GetLock().Unlock()
 			shutdownErrCh := make(chan error, 1)
 			notification := func() (context.Context, interface{}, chan<- error) {
 				// TODO: later change it to a context with timeout
+				log.Println("proceed to shutdown container")
 				return context.TODO(), Shutdown, shutdownErrCh
 			}
 
@@ -166,13 +171,30 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 					return
 				}
 			}
-		default:
-			inbox := comp.getInbox()
-			if inbox == nil {
-				continue
+		case Component:
+			// check if message is a copy of the same underlying concrete component type
+			compConcreteType, msgCompConcreteType := reflect.TypeOf(comp).Elem(), reflect.TypeOf(msg).Elem()
+			if compConcreteType == msgCompConcreteType {
+				// validate if etag of the copy is current or not
+				if comp.GetEtag() != msgType.GetEtag() {
+					errCh <- errors.New("component copy is not current due to mismatched etag")
+					close(errCh)
+					break
+				}
 			}
-			inbox <- msgFunc
+			goto sendToInbox
+		default:
+			goto sendToInbox
 		}
+
+	sendToInbox:
+		inbox := comp.getInbox()
+		if inbox == nil {
+			close(errCh)
+			continue
+		}
+		inbox <- msgFunc
+
 	}
 }
 
@@ -292,7 +314,14 @@ func (c *Container) Stop(ctx context.Context) error {
 		}
 	}
 
-	defer close(c.signalCh)
+	defer func() {
+		signal.Stop(c.signalCh)
+		if c.signalCh != nil {
+			close(c.signalCh)
+			c.signalCh = nil
+		}
+	}()
+
 	return nil
 }
 

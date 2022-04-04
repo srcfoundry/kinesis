@@ -8,7 +8,7 @@ Kinesis is an extensible framework reference for building event-driven microserv
 
 ### TODO
 - [X] implement container Stop to stop components maintained within it
-- [ ] root container to block until interrupt signal from OS
-- [ ] check mechanism for returning copy of initialized component from container.
-- [ ] using component hash to accept/reject component type messages to update.
+- [X] root container to block until interrupt signal from OS
+- [X] check mechanism for returning copy of initialized component from container.
+- [X] using component hash & etag to accept/reject component type messages to update.
 - [ ] add more UT to cover all mechanisms developed till now.

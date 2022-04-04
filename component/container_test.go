@@ -21,7 +21,7 @@ func TestContainer_Add(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "Add_SimpleComponent",
+			name: "Add_SimpleComponent_test2",
 			args: args{
 				comp: &SimpleComponent{Name: "simpleTestComponent"},
 			},
@@ -131,6 +131,91 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 			}
 			if !reflect.DeepEqual(gotSimpleType.MapValues, tt.wantMapValues1) {
 				t.Errorf("Container.GetComponentCopy() = %v, want %v", gotSimpleType.MapValues, tt.wantMapValues1)
+			}
+		})
+	}
+
+	subscribe, errCh := make(chan interface{}, 1), make(chan error, 1)
+	c.Subscribe("testS", subscribe)
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		c.Notify(func() (context.Context, interface{}, chan<- error) {
+			return nil, Shutdown, errCh
+		})
+	}()
+
+outer:
+	for {
+		select {
+		case notification := <-subscribe:
+			if notification == Stopped {
+				break outer
+			}
+		case <-errCh:
+		}
+	}
+}
+
+func TestContainer_NotifyValidComponentCopy(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.Add(c)
+
+	type TestSimpleType struct {
+		SimpleComponent
+		String1   string
+		Int1      int
+		MapValues map[string]bool
+	}
+
+	var (
+		testComponentName string = "simpleTestComponent"
+		intVal            int    = 7753
+		stringVal         string = "simpleStringValue"
+		mapVals                  = map[string]bool{"key1": true, "key2": false}
+	)
+	testComp := &TestSimpleType{}
+	testComp.Name = testComponentName
+	testComp.String1 = stringVal
+	testComp.Int1 = intVal
+	testComp.MapValues = mapVals
+	c.Add(testComp)
+
+	newCompCopy, _ := c.GetComponentCopy(testComponentName)
+	errCh := make(chan error, 1)
+
+	testComp.Notify(func() (context.Context, interface{}, chan<- error) {
+		return nil, newCompCopy, errCh
+	})
+
+	type args struct {
+		name string
+	}
+
+	tests := []struct {
+		name            string
+		wantErr         bool
+		wantIsErrChOpen bool
+	}{
+		{
+			name:            "NotifyValidComponentCopy",
+			wantErr:         false,
+			wantIsErrChOpen: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err, isOpen := <-errCh
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NotifyValidComponentCopy  error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if isOpen != tt.wantIsErrChOpen {
+				t.Errorf("NotifyValidComponentCopy  isOpen = %v, wantIsErrChOpen %v", isOpen, tt.wantIsErrChOpen)
+				return
 			}
 		})
 	}

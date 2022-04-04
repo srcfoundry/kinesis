@@ -135,7 +135,11 @@ func (d *SimpleComponent) tearDown() {
 	if d.isMessagingStopped != nil {
 		close(d.isMessagingStopped)
 	}
-	close(d.mmux)
+
+	if d.mmux != nil {
+		close(d.mmux)
+		d.mmux = nil
+	}
 }
 
 func (d *SimpleComponent) String() string {
