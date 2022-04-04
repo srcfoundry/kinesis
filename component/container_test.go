@@ -7,6 +7,29 @@ import (
 	"time"
 )
 
+func shutdownTestContainer(c *Container, delay time.Duration) {
+	subscribe, errCh := make(chan interface{}, 1), make(chan error, 1)
+	c.Subscribe("testS", subscribe)
+
+	go func() {
+		time.Sleep(delay)
+		c.Notify(func() (context.Context, interface{}, chan<- error) {
+			return nil, Shutdown, errCh
+		})
+	}()
+
+outer:
+	for {
+		select {
+		case notification := <-subscribe:
+			if notification == Stopped {
+				break outer
+			}
+		case <-errCh:
+		}
+	}
+}
+
 func TestContainer_Add(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
@@ -37,28 +60,7 @@ func TestContainer_Add(t *testing.T) {
 			}
 		})
 	}
-
-	subscribe, errCh := make(chan interface{}, 1), make(chan error, 1)
-	c.Subscribe("testS", subscribe)
-
-	go func() {
-		time.Sleep(2 * time.Second)
-		c.Notify(func() (context.Context, interface{}, chan<- error) {
-			return nil, Shutdown, errCh
-		})
-	}()
-
-outer:
-	for {
-		select {
-		case notification := <-subscribe:
-			if notification == Stopped {
-				break outer
-			}
-		case <-errCh:
-		}
-	}
-
+	shutdownTestContainer(c, 2*time.Second)
 }
 
 func TestContainer_GetComponentCopy(t *testing.T) {
@@ -135,26 +137,7 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 		})
 	}
 
-	subscribe, errCh := make(chan interface{}, 1), make(chan error, 1)
-	c.Subscribe("testS", subscribe)
-
-	go func() {
-		time.Sleep(2 * time.Second)
-		c.Notify(func() (context.Context, interface{}, chan<- error) {
-			return nil, Shutdown, errCh
-		})
-	}()
-
-outer:
-	for {
-		select {
-		case notification := <-subscribe:
-			if notification == Stopped {
-				break outer
-			}
-		case <-errCh:
-		}
-	}
+	shutdownTestContainer(c, 2*time.Second)
 }
 
 func TestContainer_NotifyValidComponentCopy(t *testing.T) {
@@ -220,26 +203,7 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 		})
 	}
 
-	subscribe, errCh := make(chan interface{}, 1), make(chan error, 1)
-	c.Subscribe("testS", subscribe)
-
-	go func() {
-		time.Sleep(2 * time.Second)
-		c.Notify(func() (context.Context, interface{}, chan<- error) {
-			return nil, Shutdown, errCh
-		})
-	}()
-
-outer:
-	for {
-		select {
-		case notification := <-subscribe:
-			if notification == Stopped {
-				break outer
-			}
-		case <-errCh:
-		}
-	}
+	shutdownTestContainer(c, 2*time.Second)
 }
 
 // TODO: failing test case. investigate later
