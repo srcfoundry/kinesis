@@ -62,27 +62,30 @@ type Component interface {
 	preInit()
 	tearDown()
 
-	// Init method should include logic which finishes with reasonable amount of time, since it blocks initializing other components for the application unless this has finished executing.
-	// Exceptions to this could be infra components which handle database or messaging requirements, which other components might be dependent for proper functioning.
+	// Init method should include logic which finishes with reasonable amount of time, since it blocks initializing other components for the application
+	// unless this has finished executing. Exceptions to this could be infra components which handle database or messaging requirements, which other
+	// components might be dependent for proper functioning.
 	Init(context.Context) error
 	Start(context.Context) error
 	Stop(context.Context) error
 
-	// Notify could be used as a primary means to asynchronously send any type of message to a component, wrapped as a function. Once the message is processed by the receiving component, proceed to
-	// close the error channel within the receiving component, to indicate to the sender that it had finished processing the message. In event of any error, the receiving component could
-	// pass along the error on the error channel before closing the channel.
+	// Notify could be used as a primary means to asynchronously send any type of message to a component, wrapped as a function. Once the message is processed
+	// by the receiving component, proceed to close the error channel within the receiving component, to indicate to the sender that it had finished processing
+	// the message. In event of any error, the receiving component could pass along the error on the error channel before closing the channel.
 	Notify(func() (context.Context, interface{}, chan<- error))
 
 	// Subscribers could pass a channel to receive state/stage notifications of components it might be interested
 	Subscribe(subscriber string, subscriberCh chan<- interface{}) error
 
-	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue to receive messages until the returned notification channel is closed.
+	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue to
+	// receive messages until the returned notification channel is closed.
 	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
 	getInbox() chan func() (context.Context, interface{}, chan<- error)
 
 	getMmux() chan func() (context.Context, interface{}, chan<- error)
 
-	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic for exponential backoff to return the delay duration between restarts.
+	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic for exponential backoff
+	// to return the delay duration between restarts.
 	IsRestartableWithDelay() (bool, time.Duration)
 
 	setContainer(*Container)
@@ -208,10 +211,12 @@ func (d *SimpleComponent) notifySubscribers(notification interface{}) {
 	}
 }
 
-// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
+// components which use SimpleComponent as embedded type could override this method to have custom implementation.
+// Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) Init(context.Context) error { return nil }
 
-// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
+// components which use SimpleComponent as embedded type could override this method to have custom implementation.
+// Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) Start(context.Context) error {
 	inbox := d.getInbox()
 	if inbox == nil {
@@ -227,12 +232,14 @@ func (d *SimpleComponent) Start(context.Context) error {
 	return nil
 }
 
-// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
+// components which use SimpleComponent as embedded type could override this method to have custom implementation.
+// Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
 	return true, 3 * time.Second
 }
 
-// components which use SimpleComponent as embedded type could override this method to have custom implementation. Refer proper guidelines for implementing the method within Component interface.
+// components which use SimpleComponent as embedded type could override this method to have custom implementation.
+// Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) Stop(context.Context) error { return nil }
 
 func (d *SimpleComponent) setContainer(c *Container) {

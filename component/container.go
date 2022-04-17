@@ -28,10 +28,12 @@ type Container struct {
 	// slice to maintain the order of components being added
 	components  []string
 	cComponents map[string]cComponent
+	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
 }
 
 func (c *Container) Init(ctx context.Context) error {
 	c.cComponents = make(map[string]cComponent)
+	c.cHandlers = make(map[string]func(http.ResponseWriter, *http.Request))
 	runOnce.Do(func() {
 		c.signalCh = make(chan os.Signal, 1)
 		signal.Notify(c.signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
@@ -48,8 +50,7 @@ func (c *Container) Start(ctx context.Context) error {
 				log.Println("signalCh closed for", c.GetName())
 				return nil
 			}
-			// c.GetLock().Lock()
-			// defer c.GetLock().Unlock()
+
 			shutdownErrCh := make(chan error, 1)
 			notification := func() (context.Context, interface{}, chan<- error) {
 				// TODO: later change it to a context with timeout
@@ -236,7 +237,7 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	cComp.cName = cName
 
 	// proceeding to assign URI for the component. for that we would need to travserse all the way to top container.
-	rootC := c.GetContainer()
+	rootC := comp.GetContainer()
 	paths := []string{}
 	for rootC != nil {
 		paths = append(paths, rootC.GetName())
@@ -251,7 +252,6 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	}
 	cURI += cName
 
-	handlers := map[string]func(http.ResponseWriter, *http.Request){}
 	cType := reflect.TypeOf(comp)
 	cTypeVal := reflect.ValueOf(comp)
 
@@ -264,19 +264,17 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 			methodName := cType.Method(i).Name
 			// ServeHTTP becomes the default URI to the component
 			if methodName == "ServeHTTP" {
-				handlers[cURI] = httpHandlerFunc
+				c.cHandlers[cURI] = httpHandlerFunc
+				log.Println("added URI", cURI)
 			} else {
 				handlerURI := cURI + "/" + strings.ToLower(methodName)
-				handlers[handlerURI] = httpHandlerFunc
+				c.cHandlers[handlerURI] = httpHandlerFunc
+				log.Println("added URI", handlerURI)
 			}
 		}
 	}
 
 	cComp.comp = comp
-	if len(handlers) > 0 {
-		cComp.cHandlers = handlers
-	}
-
 	return nil
 }
 
@@ -371,6 +369,10 @@ func (c *Container) GetComponentCopy(name string) (Component, error) {
 	return newVal.(Component), nil
 }
 
+func (c *Container) GetHttpHandler(URI string) func(w http.ResponseWriter, r *http.Request) {
+	return c.cHandlers[URI]
+}
+
 func copyStruct(dest, src interface{}) {
 	buf := new(bytes.Buffer)
 	gob.NewEncoder(buf).Encode(src)
@@ -379,7 +381,6 @@ func copyStruct(dest, src interface{}) {
 
 // canonical Component which enhances the component
 type cComponent struct {
-	cName     string
-	comp      Component
-	cHandlers map[string]func(http.ResponseWriter, *http.Request)
+	cName string
+	comp  Component
 }

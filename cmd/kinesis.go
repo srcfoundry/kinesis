@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/srcfoundry/kinesis"
+	"github.com/srcfoundry/kinesis/common"
 	"github.com/srcfoundry/kinesis/component"
 )
 
@@ -12,6 +13,10 @@ func main() {
 	app := &kinesis.App{}
 	app.Name = "kinesis"
 	app.Add(app)
+
+	httpServer := new(common.HttpServer)
+	httpServer.Name = "httpserver"
+	app.Add(httpServer)
 
 	subscribe := make(chan interface{}, 1)
 	defer close(subscribe)

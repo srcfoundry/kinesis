@@ -7,8 +7,12 @@ Kinesis is an extensible framework reference for building event-driven microserv
 <br/>
 
 ### TODO
+- [] add dynamic http routes addition/deletion
+- [] design on demo app to showcase functionalities
+- [] add persistence capability for stateful app
+- [] defer registering for OS signal notifications until root container initialization
 - [X] implement container Stop to stop components maintained within it
 - [X] root container to block until interrupt signal from OS
 - [X] check mechanism for returning copy of initialized component from container.
 - [X] using component hash & etag to accept/reject component type messages to update.
-- [ ] add more UT to cover all mechanisms developed till now.
+- [X] add more UT to cover all mechanisms developed till now.
