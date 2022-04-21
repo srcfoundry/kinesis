@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-	_ "unsafe"
 
 	"github.com/gorilla/mux"
 	"github.com/srcfoundry/kinesis/component"

@@ -134,6 +134,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		if err != nil {
 			return err
 		}
+		c.removeHttpHandlers(comp)
 		comp.setStage(Stopped)
 		fallthrough
 	case Stopped:
@@ -235,46 +236,19 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	}
 	cName = strings.ToLower(cName)
 	cComp.cName = cName
-
-	// proceeding to assign URI for the component. for that we would need to travserse all the way to top container.
-	rootC := comp.GetContainer()
-	paths := []string{}
-	for rootC != nil {
-		paths = append(paths, rootC.GetName())
-		rootC = rootC.GetContainer()
-	}
-
-	cURI := "/"
-	if len(paths) > 0 {
-		for i := len(paths) - 1; i >= 0; i-- {
-			cURI += paths[i] + "/"
-		}
-	}
-	cURI += cName
-
-	cType := reflect.TypeOf(comp)
-	cTypeVal := reflect.ValueOf(comp)
-
-	//derive the http routes within the component
-	for i := 0; i < cTypeVal.NumMethod(); i++ {
-		methodVal := cTypeVal.Method(i)
-
-		// check for methods matching func signature of http handler
-		if httpHandlerFunc, ok := methodVal.Interface().(func(http.ResponseWriter, *http.Request)); ok {
-			methodName := cType.Method(i).Name
-			// ServeHTTP becomes the default URI to the component
-			if methodName == "ServeHTTP" {
-				c.cHandlers[cURI] = httpHandlerFunc
-				log.Println("added URI", cURI)
-			} else {
-				handlerURI := cURI + "/" + strings.ToLower(methodName)
-				c.cHandlers[handlerURI] = httpHandlerFunc
-				log.Println("added URI", handlerURI)
-			}
-		}
-	}
-
 	cComp.comp = comp
+
+	handlers := deriveHttpHandlers(comp)
+	if len(handlers) <= 0 {
+		goto returnnoerror
+	}
+
+	for cURI, httpHandlerFunc := range handlers {
+		c.cHandlers[cURI] = httpHandlerFunc
+		log.Println("added URI", cURI)
+	}
+
+returnnoerror:
 	return nil
 }
 
@@ -373,10 +347,66 @@ func (c *Container) GetHttpHandler(URI string) func(w http.ResponseWriter, r *ht
 	return c.cHandlers[URI]
 }
 
+func (c *Container) removeHttpHandlers(comp Component) {
+	// obtain all the handlers for the component
+	handlers := deriveHttpHandlers(comp)
+	if len(handlers) <= 0 {
+		log.Println("unable to find any http handlers to remove for", comp.GetName())
+	}
+
+	for cURI, _ := range handlers {
+		delete(c.cHandlers, cURI)
+		log.Println("removed URI", cURI)
+	}
+}
+
 func copyStruct(dest, src interface{}) {
 	buf := new(bytes.Buffer)
 	gob.NewEncoder(buf).Encode(src)
 	gob.NewDecoder(buf).Decode(dest)
+}
+
+func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r *http.Request) {
+	cName := strings.ToLower(comp.GetName())
+	// proceeding to assign URI for the component. for that we would need to travserse all the way to top container.
+	rootC := comp.GetContainer()
+	paths := []string{}
+	for rootC != nil {
+		paths = append(paths, rootC.GetName())
+		rootC = rootC.GetContainer()
+	}
+
+	cURI := "/"
+	if len(paths) > 0 {
+		for i := len(paths) - 1; i >= 0; i-- {
+			cURI += paths[i] + "/"
+		}
+	}
+	cURI += cName
+
+	cType := reflect.TypeOf(comp)
+	cTypeVal := reflect.ValueOf(comp)
+
+	handlers := map[string]func(w http.ResponseWriter, r *http.Request){}
+
+	//derive the http routes within the component
+	for i := 0; i < cTypeVal.NumMethod(); i++ {
+		methodVal := cTypeVal.Method(i)
+
+		// check for methods matching func signature of http handler
+		if httpHandlerFunc, ok := methodVal.Interface().(func(http.ResponseWriter, *http.Request)); ok {
+			methodName := cType.Method(i).Name
+			// ServeHTTP becomes the default URI to the component
+			if methodName == "ServeHTTP" {
+				handlers[cURI] = httpHandlerFunc
+			} else {
+				handlerURI := cURI + "/" + strings.ToLower(methodName)
+				handlers[handlerURI] = httpHandlerFunc
+			}
+		}
+	}
+
+	return handlers
 }
 
 // canonical Component which enhances the component

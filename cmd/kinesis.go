@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	app := &kinesis.App{}
+	app := new(kinesis.App)
 	app.Name = "kinesis"
 	app.Add(app)
 
