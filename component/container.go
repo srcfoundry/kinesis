@@ -97,7 +97,7 @@ func (c *Container) Add(comp Component) error {
 
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
-	switch comp.Stage() {
+	switch comp.GetStage() {
 	case Submitted:
 		comp.setStage(Preinitializing)
 		fallthrough
@@ -150,7 +150,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 // preinitialized successfully, would each have its own message handlers started as separate go routines.
 func (c *Container) startMmux(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
-		if comp.State() != Active {
+		if comp.GetState() != Active {
 			return
 		}
 		c.startMmux(ctx, comp)
@@ -297,10 +297,10 @@ func (c *Container) Stop(ctx context.Context) error {
 	return nil
 }
 
-// GetComponentCopy returns a copy of the component within a container. Only exported field values would be copied over. Advisable not to mark pointer
+// GetComponent returns a copy of the component within a container. Only exported field values would be copied over. Advisable not to mark pointer
 // fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
 // be copied over.
-func (c *Container) GetComponentCopy(name string) (Component, error) {
+func (c *Container) GetComponent(name string) (Component, error) {
 	var (
 		cComp cComponent
 		found bool
@@ -316,6 +316,28 @@ func (c *Container) GetComponentCopy(name string) (Component, error) {
 	if comp == nil {
 		return nil, errors.New("unable to find component type within cComponent")
 	}
+
+	return GetComponentCopy(comp)
+}
+
+func (c *Container) GetHttpHandler(URI string) func(w http.ResponseWriter, r *http.Request) {
+	return c.cHandlers[URI]
+}
+
+func (c *Container) removeHttpHandlers(comp Component) {
+	// obtain all the handlers for the component
+	handlers := deriveHttpHandlers(comp)
+	if len(handlers) <= 0 {
+		log.Println("unable to find any http handlers to remove for", comp.GetName())
+	}
+
+	for cURI, _ := range handlers {
+		delete(c.cHandlers, cURI)
+		log.Println("removed URI", cURI)
+	}
+}
+
+func GetComponentCopy(comp Component) (Component, error) {
 	comp.GetLock().Lock()
 	defer comp.GetLock().Unlock()
 
@@ -341,23 +363,6 @@ func (c *Container) GetComponentCopy(name string) (Component, error) {
 
 	copyStruct(newVal, compVal)
 	return newVal.(Component), nil
-}
-
-func (c *Container) GetHttpHandler(URI string) func(w http.ResponseWriter, r *http.Request) {
-	return c.cHandlers[URI]
-}
-
-func (c *Container) removeHttpHandlers(comp Component) {
-	// obtain all the handlers for the component
-	handlers := deriveHttpHandlers(comp)
-	if len(handlers) <= 0 {
-		log.Println("unable to find any http handlers to remove for", comp.GetName())
-	}
-
-	for cURI, _ := range handlers {
-		delete(c.cHandlers, cURI)
-		log.Println("removed URI", cURI)
-	}
 }
 
 func copyStruct(dest, src interface{}) {

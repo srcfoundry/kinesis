@@ -54,10 +54,10 @@ func (h *HttpServer) Start(ctx context.Context) error {
 
 	addr := "0.0.0.0:"
 	if len(h.HttpPort) <= 0 {
-		addr += defaultHttpPort
-	} else {
-		addr += h.HttpPort
+		h.HttpPort = defaultHttpPort
 	}
+
+	addr += h.HttpPort
 
 	h.server = http.Server{
 		Addr: addr,

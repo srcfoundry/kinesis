@@ -1,7 +1,13 @@
 # Kinesis
 
-Kinesis is an extensible framework reference for building event-driven microservices. 
-<p>Common functionalities are modeled as <b>components</b>, which communicate with each other by means of passing messages or notifications.</p>
+Kinesis is an extensible model for developing event-driven microservices in golang. The software architecture is designed 
+on the [C4](https://c4model.com) model, making it easy to separate various functionalities which serve a purpose, into 
+separate <b>components</b>. A <b>container</b> comprises of those components which eventually make up a system.
+
+A system could also be viewed as a collection of containers, each catering to an aspect of the overall system and therefore
+a container could be considered as a component.
+
+In addition to modelling container <-> component heirachies emphasis is also provided on how components could communicate with each other by means of passing messages or notifications.
 
 <br/>
 

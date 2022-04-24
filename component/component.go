@@ -2,6 +2,7 @@ package component
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -54,10 +55,10 @@ type Component interface {
 	GetName() string
 
 	setStage(stage)
-	Stage() stage
+	GetStage() stage
 
 	setState(state)
-	State() state
+	GetState() state
 
 	preInit()
 	tearDown()
@@ -104,13 +105,13 @@ type Component interface {
 }
 
 type SimpleComponent struct {
-	Etag string
+	Etag string `json:"etag" hash:"ignore"`
 	hash uint64
 
-	Name      string
+	Name      string `json:"name"`
 	container *Container
-	stage     stage
-	state     state
+	Stage     stage `json:"stage"`
+	State     state `json:"state"`
 
 	// message mux
 	mmux chan func() (context.Context, interface{}, chan<- error)
@@ -151,30 +152,30 @@ func (d *SimpleComponent) String() string {
 
 func (d *SimpleComponent) setStage(s stage) {
 	log.Println(d, s)
-	d.stage = s
+	d.Stage = s
 	d.notifySubscribers(s)
 
-	if d.stage >= Initialized && d.stage <= Started {
+	if d.Stage >= Initialized && d.Stage <= Started {
 		d.setState(Active)
 	} else {
 		d.setState(Inactive)
 	}
 }
 
-func (d *SimpleComponent) State() state {
-	return d.state
+func (d *SimpleComponent) GetState() state {
+	return d.State
 }
 
 func (d *SimpleComponent) setState(s state) {
-	if d.state != s {
+	if d.State != s {
 		log.Println(d, s)
 		d.notifySubscribers(s)
 	}
-	d.state = s
+	d.State = s
 }
 
-func (d *SimpleComponent) Stage() stage {
-	return d.stage
+func (d *SimpleComponent) GetStage() stage {
+	return d.Stage
 }
 
 func (d *SimpleComponent) setHash(hash uint64) {
@@ -300,6 +301,27 @@ func (d *SimpleComponent) Notify(notification func() (context.Context, interface
 }
 
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var (
+		comp Component
+		err  error
+	)
+
+	container := d.GetContainer()
+	if container != nil {
+		comp, err = container.GetComponent(d.GetName())
+	} else {
+		comp, err = GetComponentCopy(d)
+	}
+
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte("{\"status\":\"ok\"}"))
+	compBytes, err := json.Marshal(comp)
+	if err != nil {
+		compBytes = []byte("{\"status\":\"undefined\"}")
+	}
+	w.Write(compBytes)
 }

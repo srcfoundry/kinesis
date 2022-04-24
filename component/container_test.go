@@ -114,7 +114,7 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := c.GetComponentCopy(tt.args.name)
+			got, err := c.GetComponent(tt.args.name)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Container.GetComponentCopy() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -165,7 +165,7 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	testComp.MapValues = mapVals
 	c.Add(testComp)
 
-	newCompCopy, _ := c.GetComponentCopy(testComponentName)
+	newCompCopy, _ := c.GetComponent(testComponentName)
 	errCh := make(chan error, 1)
 
 	testComp.Notify(func() (context.Context, interface{}, chan<- error) {
