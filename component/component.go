@@ -319,9 +319,11 @@ func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	compBytes, err := json.Marshal(comp)
+	w.Header().Set("ETag", comp.GetEtag())
+
+	compBytes, err := json.MarshalIndent(comp, "", "  ")
 	if err != nil {
-		compBytes = []byte("{\"status\":\"undefined\"}")
+		compBytes = []byte(`{"status":"undefined"}"`)
 	}
 	w.Write(compBytes)
 }
