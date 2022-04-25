@@ -25,15 +25,21 @@ var runOnce sync.Once
 type Container struct {
 	SimpleComponent
 	signalCh chan os.Signal
+
 	// slice to maintain the order of components being added
-	components  []string
+	components []string
+	// map of indices to which components are found in the components slice
+	componentsIndices map[string]int
+
 	cComponents map[string]cComponent
 	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
 }
 
 func (c *Container) Init(ctx context.Context) error {
 	c.cComponents = make(map[string]cComponent)
+	c.componentsIndices = make(map[string]int)
 	c.cHandlers = make(map[string]func(http.ResponseWriter, *http.Request))
+
 	runOnce.Do(func() {
 		c.signalCh = make(chan os.Signal, 1)
 		signal.Notify(c.signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
@@ -91,6 +97,7 @@ func (c *Container) Add(comp Component) error {
 	}
 	c.cComponents[comp.GetName()] = cComm
 	c.components = append(c.components, comp.GetName())
+	c.componentsIndices[comp.GetName()] = len(c.components) - 1
 
 	return nil
 }
@@ -142,6 +149,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Tearingdown:
 		comp.tearDown()
 		comp.setStage(Teareddown)
+		c.removeComponent(comp.GetName())
 	}
 	return nil
 }
@@ -283,6 +291,7 @@ func (c *Container) Stop(ctx context.Context) error {
 		last = len(c.components) - 1
 		if found {
 			delete(c.cComponents, cName)
+			delete(c.componentsIndices, cName)
 		}
 	}
 
@@ -335,6 +344,23 @@ func (c *Container) removeHttpHandlers(comp Component) {
 		delete(c.cHandlers, cURI)
 		log.Println("removed URI", cURI)
 	}
+}
+
+// removeComponent removes a component from a container in the event its being shutdown
+func (c *Container) removeComponent(name string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	delete(c.cComponents, name)
+
+	indx, found := -1, false
+	if indx, found = c.componentsIndices[name]; !found {
+		return
+	}
+
+	// removing component name from silce at indx
+	c.components = append(c.components[:indx], c.components[indx+1:]...)
+	delete(c.componentsIndices, name)
 }
 
 func GetComponentCopy(comp Component) (Component, error) {
