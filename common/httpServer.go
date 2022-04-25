@@ -92,8 +92,11 @@ func httpHandlerFunc(c *component.Container) func(w http.ResponseWriter, r *http
 func ServeHTTP_404(w http.ResponseWriter, r *http.Request) {
 	log.Println("URI:", r.URL, "not found")
 	w.WriteHeader(http.StatusNotFound)
+	w.Write([]byte(`{"status":"not found"}"`))
 }
 
 func ServeHTTP_501(w http.ResponseWriter, r *http.Request) {
+	log.Println("URI:", r.URL, "not implemented")
 	w.WriteHeader(http.StatusNotImplemented)
+	w.Write([]byte(`{"status":"not implemented"}"`))
 }
