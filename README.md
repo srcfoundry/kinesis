@@ -12,8 +12,6 @@ In addition to modelling container <-> component heirachies emphasis is also pro
 <br/>
 
 ### Building and Running
-- ```go install golang.org/x/tools/cmd/stringer@latest```
-- ```go generate ./...```
 - ```go build cmd/kinesis.go```
 - ```./kinesis```
 
