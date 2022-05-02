@@ -301,19 +301,20 @@ func (d *SimpleComponent) Notify(notification func() (context.Context, interface
 }
 
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var (
-		comp Component
-		err  error
-	)
+	var comp Component
 
 	container := d.GetContainer()
 	if container != nil {
-		comp, err = container.GetComponent(d.GetName())
+		comp, _ = container.GetComponent(d.GetName())
 	} else {
-		comp, err = GetComponentCopy(d)
+		comp, _ = GetComponentCopy(d)
 	}
 
-	if err != nil {
+	MarshallToHttpResponseWriter(w, comp)
+}
+
+func MarshallToHttpResponseWriter(w http.ResponseWriter, comp Component) {
+	if comp == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}

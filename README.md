@@ -14,6 +14,7 @@ In addition to modelling container <-> component heirachies emphasis is also pro
 ### Building and Running
 - ```go build cmd/kinesis.go```
 - ```./kinesis```
+- ```ctrl-c to quit```
 
 <br/>
 
