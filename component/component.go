@@ -3,7 +3,6 @@ package component
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -196,7 +195,7 @@ func (d *SimpleComponent) GetEtag() string {
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
 	if _, found := d.subscribers[subscriber]; found {
-		return errors.New("found " + subscriber + " already subscribed to " + d.GetName())
+		return fmt.Errorf("%v already subscribed to %v", subscriber, d.GetName())
 	}
 	if d.subscribers == nil {
 		d.subscribers = make(map[string]chan<- interface{})
@@ -257,7 +256,7 @@ func (d *SimpleComponent) getMmux() chan func() (context.Context, interface{}, c
 
 func (d *SimpleComponent) SetInbox(inbox chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error) {
 	if inbox == nil {
-		return nil, errors.New("SetMessageReader was passed an empty messaging channel")
+		return nil, fmt.Errorf("%v SetInbox was passed an empty messaging channel", d.GetName())
 	}
 
 	d.inbox = inbox
@@ -284,7 +283,7 @@ func (d *SimpleComponent) Notify(notification func() (context.Context, interface
 
 	mMux := d.getMmux()
 	if mMux == nil {
-		err := errors.New("message mux not initialized for " + d.GetName())
+		err := fmt.Errorf("message mux not initialized for %v", d.GetName())
 		log.Println("failed to process notification due to", err.Error())
 		_, _, errCh := notification()
 
