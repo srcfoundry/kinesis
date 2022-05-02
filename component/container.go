@@ -91,7 +91,7 @@ func (c *Container) Add(comp Component) error {
 	}
 
 	if _, found := c.cComponents[comp.GetName()]; found {
-		err := errors.New("activating component with same name " + comp.GetName())
+		err := fmt.Errorf("%v already activated", comp.GetName())
 		log.Println("failed to add component due to", err.Error())
 		return err
 	}
@@ -317,7 +317,7 @@ func (c *Container) GetComponent(name string) (Component, error) {
 
 	c.GetLock().Lock()
 	if cComp, found = c.cComponents[name]; !found {
-		return nil, errors.New(fmt.Sprintln("unable to find component", name, "within", c.GetName()))
+		return nil, fmt.Errorf("unable to find component %v within %v", name, c.GetName())
 	}
 	c.GetLock().Unlock()
 

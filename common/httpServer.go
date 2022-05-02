@@ -2,7 +2,7 @@ package common
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -40,7 +40,7 @@ func (h *HttpServer) Init(ctx context.Context) error {
 
 	// check the first bool value written to the channel and return error if an HttpServer component had already been initialized.
 	if <-isAlreadyStarted {
-		return errors.New("already running")
+		return fmt.Errorf("error initializing %v since already running", h.GetName())
 	}
 
 	// if starting for first time would have to drain the channel of remaining value before returning, to avoid memory leak
