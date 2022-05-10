@@ -3,7 +3,6 @@ package common
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -85,18 +84,6 @@ func httpHandlerFunc(c *component.Container) func(w http.ResponseWriter, r *http
 			httpHandler(w, r)
 			return
 		}
-		ServeHTTP_404(w, r)
+		http.NotFound(w, r)
 	}
-}
-
-func ServeHTTP_404(w http.ResponseWriter, r *http.Request) {
-	log.Println("URI:", r.URL, "not found")
-	w.WriteHeader(http.StatusNotFound)
-	w.Write([]byte(`{"status":"not found"}"`))
-}
-
-func ServeHTTP_501(w http.ResponseWriter, r *http.Request) {
-	log.Println("URI:", r.URL, "not implemented")
-	w.WriteHeader(http.StatusNotImplemented)
-	w.Write([]byte(`{"status":"not implemented"}"`))
 }

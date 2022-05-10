@@ -329,8 +329,19 @@ func (c *Container) GetComponent(name string) (Component, error) {
 	return GetComponentCopy(comp)
 }
 
+// GetHttpHandler returns the longest matching URI prefix handler
 func (c *Container) GetHttpHandler(URI string) func(w http.ResponseWriter, r *http.Request) {
-	return c.cHandlers[URI]
+	var httpHandler func(w http.ResponseWriter, r *http.Request)
+
+	for len(URI) > 0 {
+		httpHandler = c.cHandlers[URI]
+		if httpHandler != nil {
+			return httpHandler
+		}
+		lastSeparatorIndx := strings.LastIndex(URI, "/")
+		URI = URI[:lastSeparatorIndx]
+	}
+	return nil
 }
 
 func (c *Container) removeHttpHandlers(comp Component) {
@@ -430,6 +441,8 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 			// ServeHTTP becomes the default URI to the component
 			if methodName == "ServeHTTP" {
 				handlers[cURI] = httpHandlerFunc
+				// set the component URI
+				comp.setURI(cURI)
 			} else {
 				handlerURI := cURI + "/" + strings.ToLower(methodName)
 				handlers[handlerURI] = httpHandlerFunc

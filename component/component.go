@@ -53,6 +53,9 @@ const (
 type Component interface {
 	GetName() string
 
+	setURI(string)
+	GetURI() string
+
 	setStage(stage)
 	GetStage() stage
 
@@ -108,6 +111,7 @@ type SimpleComponent struct {
 	hash uint64
 
 	Name      string `json:"name"`
+	uri       string
 	container *Container
 	Stage     stage `json:"stage"`
 	State     state `json:"state"`
@@ -124,6 +128,14 @@ type SimpleComponent struct {
 
 func (d *SimpleComponent) GetName() string {
 	return d.Name
+}
+
+func (d *SimpleComponent) setURI(uri string) {
+	d.uri = uri
+}
+
+func (d *SimpleComponent) GetURI() string {
+	return d.uri
 }
 
 func (d *SimpleComponent) preInit() {
@@ -301,6 +313,12 @@ func (d *SimpleComponent) Notify(notification func() (context.Context, interface
 
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var comp Component
+
+	// if requested URI path suffix does not match component URI, then return http.StatusNotFound
+	if r.URL.Path != d.GetURI() {
+		http.NotFound(w, r)
+		return
+	}
 
 	container := d.GetContainer()
 	if container != nil {
