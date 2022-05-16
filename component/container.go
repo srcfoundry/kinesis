@@ -326,7 +326,7 @@ func (c *Container) GetComponent(name string) (Component, error) {
 		return nil, errors.New("unable to find component type within cComponent")
 	}
 
-	return GetComponentCopy(comp)
+	return getComponentCopy(comp)
 }
 
 // GetHttpHandler returns the longest matching URI prefix handler
@@ -374,7 +374,28 @@ func (c *Container) removeComponent(name string) {
 	delete(c.componentsIndices, name)
 }
 
-func GetComponentCopy(comp Component) (Component, error) {
+func setComponentEtag(comp Component) error {
+	comp.GetLock().Lock()
+	defer comp.GetLock().Unlock()
+
+	// compute hash of the component object and compare with existing hash
+	newHash, err := hashstructure.Hash(comp, hashstructure.FormatV2, nil)
+	if err != nil {
+		return err
+	}
+
+	// assign new etag if component instance hash has changed. this is required in order to resolve conflicts arising
+	// due to concurrent updates through messages.
+	if newHash != comp.Hash() {
+		comp.setHash(newHash)
+		etag := uuid.New()
+		comp.setEtag(etag.String())
+	}
+
+	return nil
+}
+
+func getComponentCopy(comp Component) (Component, error) {
 	comp.GetLock().Lock()
 	defer comp.GetLock().Unlock()
 

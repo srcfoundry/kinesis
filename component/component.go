@@ -324,7 +324,7 @@ func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if container != nil {
 		comp, _ = container.GetComponent(d.GetName())
 	} else {
-		comp, _ = GetComponentCopy(d)
+		comp, _ = getComponentCopy(d)
 	}
 
 	MarshallToHttpResponseWriter(w, comp)
