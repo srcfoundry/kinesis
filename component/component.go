@@ -77,8 +77,24 @@ type Component interface {
 	// the message. In event of any error, the receiving component could pass along the error on the error channel before closing the channel.
 	Notify(func() (context.Context, interface{}, chan<- error))
 
+	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
+	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
+	// a registration made with isHead = true, would result in the callback function getting added to index 0 (head) of the function slice and shifting any existing
+	// functions by 1 index. Repeated adds with isHead = true would be like adding to head of a LIFO stack.
+	//
+	// Note that the registered callback functions would be sent notifications prior to any subscribers, by iterating across the function slice and executing each
+	// function sequentially with a timeout conveyed within the context parameter. function slice index is also passed as a parameter which could be used to
+	// de-register the callback function.
+	// Callback functions could be registered in this manner, thereby maintaining order of execution to process a notification across components.
+	Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error
+
+	RemoveCallback(cbIndx int) error
+
 	// Subscribers could pass a channel to receive state/stage notifications of components it might be interested
+	// Note that the callback functions registered using the Callback method would be sent notifications prior to any subscribers.
 	Subscribe(subscriber string, subscriberCh chan<- interface{}) error
+
+	Unsubscribe(subscriber string) error
 
 	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue to
 	// receive messages until the returned notification channel is closed.
@@ -124,6 +140,7 @@ type SimpleComponent struct {
 	mutex              *sync.Mutex
 
 	subscribers map[string]chan<- interface{}
+	callbacks   []func(context.Context, int, interface{})
 }
 
 func (d *SimpleComponent) GetName() string {
@@ -178,11 +195,13 @@ func (d *SimpleComponent) GetState() state {
 }
 
 func (d *SimpleComponent) setState(s state) {
-	if d.State != s {
-		log.Println(d, s)
-		d.notifySubscribers(s)
-	}
+	prevState := d.State
 	d.State = s
+
+	if d.State != prevState {
+		log.Println(d, d.State)
+		d.notifySubscribers(d.State)
+	}
 }
 
 func (d *SimpleComponent) GetStage() stage {
@@ -205,15 +224,58 @@ func (d *SimpleComponent) GetEtag() string {
 	return d.Etag
 }
 
-func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
-	if _, found := d.subscribers[subscriber]; found {
-		return fmt.Errorf("%v already subscribed to %v", subscriber, d.GetName())
+func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error {
+	d.GetLock().Lock()
+	defer d.GetLock().Unlock()
+
+	if isHead {
+		d.callbacks = append([]func(ctx context.Context, cbIndx int, notification interface{}){callback}, d.callbacks...)
+	} else {
+		d.callbacks = append(d.callbacks, callback)
 	}
+	return nil
+}
+
+func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
+	if cbIndx >= len(d.callbacks) {
+		return fmt.Errorf("unable to find callback function at %v within %v", cbIndx, d.GetName())
+	}
+
+	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
+	return nil
+}
+
+func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
+	d.GetLock().Lock()
+	defer d.GetLock().Unlock()
+
 	if d.subscribers == nil {
 		d.subscribers = make(map[string]chan<- interface{})
 	}
+
+	if _, found := d.subscribers[subscriber]; found {
+		return fmt.Errorf("%v already subscribed to %v", subscriber, d.GetName())
+	}
+
 	d.subscribers[subscriber] = subscriberCh
 	log.Println(subscriber, "successfully subscribed to", d.GetName())
+	return nil
+}
+
+func (d *SimpleComponent) Unsubscribe(subscriber string) error {
+	d.GetLock().Lock()
+	defer d.GetLock().Unlock()
+
+	if d.subscribers == nil {
+		return fmt.Errorf("unable to find %v subscribed to %v", subscriber, d.GetName())
+	}
+
+	if _, found := d.subscribers[subscriber]; !found {
+		return fmt.Errorf("unable to find %v subscribed to %v", subscriber, d.GetName())
+	}
+
+	delete(d.subscribers, subscriber)
+	log.Println(subscriber, "successfully unsubscribed from", d.GetName())
 	return nil
 }
 

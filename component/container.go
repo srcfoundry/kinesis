@@ -316,15 +316,18 @@ func (c *Container) GetComponent(name string) (Component, error) {
 	)
 
 	c.GetLock().Lock()
+	defer c.GetLock().Unlock()
 	if cComp, found = c.cComponents[name]; !found {
 		return nil, fmt.Errorf("unable to find component %v within %v", name, c.GetName())
 	}
-	c.GetLock().Unlock()
 
 	comp := cComp.comp
 	if comp == nil {
 		return nil, errors.New("unable to find component type within cComponent")
 	}
+
+	comp.GetLock().Lock()
+	defer comp.GetLock().Unlock()
 
 	return getComponentCopy(comp)
 }
@@ -374,10 +377,10 @@ func (c *Container) removeComponent(name string) {
 	delete(c.componentsIndices, name)
 }
 
+// setComponentEtag calculates the component hash and sets an Entity Tag(ETag) to indicate a version of the component.
+// this function is not thread safe. caller should ensure that the function is called within a critical section or
+// call hiearchy traces back to one.
 func setComponentEtag(comp Component) error {
-	comp.GetLock().Lock()
-	defer comp.GetLock().Unlock()
-
 	// compute hash of the component object and compare with existing hash
 	newHash, err := hashstructure.Hash(comp, hashstructure.FormatV2, nil)
 	if err != nil {
@@ -391,28 +394,13 @@ func setComponentEtag(comp Component) error {
 		etag := uuid.New()
 		comp.setEtag(etag.String())
 	}
-
 	return nil
 }
 
+// getComponentCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
+// is called within a critical section or call hiearchy traces back to one.
 func getComponentCopy(comp Component) (Component, error) {
-	comp.GetLock().Lock()
-	defer comp.GetLock().Unlock()
-
-	// compute hash of the component object and compare with existing hash
-	newHash, err := hashstructure.Hash(comp, hashstructure.FormatV2, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// assign new etag if component instance hash has changed. this is required in order to resolve conflicts arising
-	// due to concurrent updates through messages.
-	if newHash != comp.Hash() {
-		comp.setHash(newHash)
-		etag := uuid.New()
-		comp.setEtag(etag.String())
-	}
-
+	setComponentEtag(comp)
 	compType := reflect.TypeOf(comp).Elem()
 	compVal := reflect.ValueOf(comp).Elem().Interface()
 
