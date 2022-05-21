@@ -110,6 +110,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		fallthrough
 	case Preinitializing:
 		comp.preInit()
+		_ = comp.Callback(true, stateChangeCallbacker(comp))
 		ctx := context.Background()
 		go c.startMmux(ctx, comp)
 		comp.setStage(Preinitialized)
@@ -375,6 +376,22 @@ func (c *Container) removeComponent(name string) {
 	// removing component name from silce at indx
 	c.components = append(c.components[:indx], c.components[indx+1:]...)
 	delete(c.componentsIndices, name)
+}
+
+func stateChangeCallbacker(comp Component) func(context.Context, int, interface{}) {
+	return func(ctx context.Context, cbIndx int, notification interface{}) {
+		switch notification {
+		case Active, Inactive:
+			log.Println("proceeding to set new ETag for", comp.GetName())
+			setComponentEtag(comp)
+		case Stopping:
+			err := comp.RemoveCallback(cbIndx)
+			if err != nil {
+				log.Println(err)
+			}
+		default:
+		}
+	}
 }
 
 // setComponentEtag calculates the component hash and sets an Entity Tag(ETag) to indicate a version of the component.

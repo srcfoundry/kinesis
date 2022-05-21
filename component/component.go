@@ -90,7 +90,7 @@ type Component interface {
 
 	RemoveCallback(cbIndx int) error
 
-	// Subscribers could pass a channel to receive state/stage notifications of components it might be interested
+	// Subscribers could pass a channel to receive state/stage notifications of components it might be interested.
 	// Note that the callback functions registered using the Callback method would be sent notifications prior to any subscribers.
 	Subscribe(subscriber string, subscriberCh chan<- interface{}) error
 
@@ -161,9 +161,6 @@ func (d *SimpleComponent) preInit() {
 }
 
 func (d *SimpleComponent) tearDown() {
-	d.GetLock().Lock()
-	defer d.GetLock().Unlock()
-
 	if d.isMessagingStopped != nil {
 		close(d.isMessagingStopped)
 	}
@@ -171,6 +168,18 @@ func (d *SimpleComponent) tearDown() {
 	if d.mmux != nil {
 		close(d.mmux)
 		d.mmux = nil
+	}
+
+	if len(d.callbacks) > 0 {
+		for cbIndx, _ := range d.callbacks {
+			d.RemoveCallback(cbIndx)
+		}
+	}
+
+	if len(d.subscribers) > 0 {
+		for subscriber, _ := range d.subscribers {
+			d.Unsubscribe(subscriber)
+		}
 	}
 }
 
@@ -181,6 +190,7 @@ func (d *SimpleComponent) String() string {
 func (d *SimpleComponent) setStage(s stage) {
 	log.Println(d, s)
 	d.Stage = s
+	d.invokeCallbacks(s)
 	d.notifySubscribers(s)
 
 	if d.Stage >= Initialized && d.Stage <= Started {
@@ -200,6 +210,7 @@ func (d *SimpleComponent) setState(s state) {
 
 	if d.State != prevState {
 		log.Println(d, d.State)
+		d.invokeCallbacks(d.State)
 		d.notifySubscribers(d.State)
 	}
 }
@@ -228,6 +239,10 @@ func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Contex
 	d.GetLock().Lock()
 	defer d.GetLock().Unlock()
 
+	if d.Stage > Started {
+		return fmt.Errorf("unable to add callback since %v is %v", d.GetName(), d.Stage)
+	}
+
 	if isHead {
 		d.callbacks = append([]func(ctx context.Context, cbIndx int, notification interface{}){callback}, d.callbacks...)
 	} else {
@@ -238,16 +253,21 @@ func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Contex
 
 func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 	if cbIndx >= len(d.callbacks) {
-		return fmt.Errorf("unable to find callback function at %v within %v", cbIndx, d.GetName())
+		return fmt.Errorf("unable to find callback function at index %v within %v", cbIndx, d.GetName())
 	}
 
 	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
+	log.Println(fmt.Sprintf("successfully removed callback function at index %v within %v", cbIndx, d.GetName()))
 	return nil
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
 	d.GetLock().Lock()
 	defer d.GetLock().Unlock()
+
+	if d.Stage > Started {
+		return fmt.Errorf("unable to subscribe since %v is %v", d.GetName(), d.Stage)
+	}
 
 	if d.subscribers == nil {
 		d.subscribers = make(map[string]chan<- interface{})
@@ -277,6 +297,38 @@ func (d *SimpleComponent) Unsubscribe(subscriber string) error {
 	delete(d.subscribers, subscriber)
 	log.Println(subscriber, "successfully unsubscribed from", d.GetName())
 	return nil
+}
+
+func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
+	if len(d.callbacks) <= 0 {
+		return
+	}
+
+	// make a copy of callback functions and iterate over the copied function slice, in case the callback function removes itself from the callback function slice
+	d.GetLock().Lock()
+	callbackFuncs := make([]func(context.Context, int, interface{}), len(d.callbacks))
+	copy(callbackFuncs, d.callbacks)
+	d.GetLock().Unlock()
+
+	for cbIndx, callbackFunc := range callbackFuncs {
+		// each callback is executed with a max timeout of 2 seconds
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+
+		go func() {
+			callbackFunc(ctx, cbIndx, notification)
+			cancel()
+		}()
+
+		// once context is cancelled, check ctx.Err() to see if context got cancelled due to executing cancel() after the callback or due to context timeout.
+		// Hint from https://stackoverflow.com/a/52799874/8952645
+		<-ctx.Done()
+		switch ctx.Err() {
+		case context.DeadlineExceeded:
+			log.Println(d.GetName(), "callback at index", cbIndx, "exceeded deadline")
+		case context.Canceled:
+			//log.Println(d.GetName(), "callback at index", cbIndx, "executed successfully")
+		}
+	}
 }
 
 func (d *SimpleComponent) notifySubscribers(notification interface{}) {
