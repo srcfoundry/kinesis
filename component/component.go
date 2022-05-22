@@ -137,7 +137,7 @@ type SimpleComponent struct {
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
-	mutex              *sync.Mutex
+	Mutex              *sync.Mutex
 
 	subscribers map[string]chan<- interface{}
 	callbacks   []func(context.Context, int, interface{})
@@ -156,7 +156,6 @@ func (d *SimpleComponent) GetURI() string {
 }
 
 func (d *SimpleComponent) preInit() {
-	d.mutex = &sync.Mutex{}
 	d.mmux = make(chan func() (context.Context, interface{}, chan<- error), 1)
 }
 
@@ -400,7 +399,7 @@ func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, 
 }
 
 func (d *SimpleComponent) GetLock() *sync.Mutex {
-	return d.mutex
+	return d.Mutex
 }
 
 func (d *SimpleComponent) Notify(notification func() (context.Context, interface{}, chan<- error)) {

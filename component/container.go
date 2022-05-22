@@ -81,6 +81,10 @@ func (c *Container) Add(comp Component) error {
 		log.Fatalln("Component name cannot be empty")
 	}
 
+	if comp != nil && comp.GetLock() == nil {
+		log.Fatalln(comp.GetName(), "mutex has not been initialized")
+	}
+
 	c.componentLifecycleFSM(context.TODO(), comp)
 
 	cComm := cComponent{}
@@ -363,8 +367,8 @@ func (c *Container) removeHttpHandlers(comp Component) {
 
 // removeComponent removes a component from a container in the event its being shutdown
 func (c *Container) removeComponent(name string) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	c.GetLock().Lock()
+	defer c.GetLock().Unlock()
 
 	delete(c.cComponents, name)
 
