@@ -137,7 +137,7 @@ type SimpleComponent struct {
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
-	Mutex              *sync.Mutex
+	Mutex              *sync.Mutex `json:"-" hash:"ignore"`
 
 	subscribers map[string]chan<- interface{}
 	callbacks   []func(context.Context, int, interface{})

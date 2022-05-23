@@ -1,9 +1,7 @@
 package component
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"log"
@@ -18,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mitchellh/hashstructure/v2"
+	"github.com/mohae/deepcopy"
 )
 
 var runOnce sync.Once
@@ -85,23 +84,23 @@ func (c *Container) Add(comp Component) error {
 		log.Fatalln(comp.GetName(), "mutex has not been initialized")
 	}
 
-	c.componentLifecycleFSM(context.TODO(), comp)
+	go func() {
+		c.componentLifecycleFSM(context.TODO(), comp)
 
-	cComm := cComponent{}
-	err := c.toCanonical(comp, &cComm)
-	if err != nil {
-		log.Println(comp, "failed to convert to canonical type due to", err.Error())
-		return err
-	}
+		cComm := cComponent{}
+		err := c.toCanonical(comp, &cComm)
+		if err != nil {
+			log.Println(comp, "failed to convert to canonical type due to", err.Error())
+		}
 
-	if _, found := c.cComponents[comp.GetName()]; found {
-		err := fmt.Errorf("%v already activated", comp.GetName())
-		log.Println("failed to add component due to", err.Error())
-		return err
-	}
-	c.cComponents[comp.GetName()] = cComm
-	c.components = append(c.components, comp.GetName())
-	c.componentsIndices[comp.GetName()] = len(c.components) - 1
+		if _, found := c.cComponents[comp.GetName()]; found {
+			err := fmt.Errorf("%v already activated", comp.GetName())
+			log.Println("failed to add component due to", err.Error())
+		}
+		c.cComponents[comp.GetName()] = cComm
+		c.components = append(c.components, comp.GetName())
+		c.componentsIndices[comp.GetName()] = len(c.components) - 1
+	}()
 
 	return nil
 }
@@ -315,13 +314,14 @@ func (c *Container) Stop(ctx context.Context) error {
 // fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
 // be copied over.
 func (c *Container) GetComponent(name string) (Component, error) {
+	c.GetLock().Lock()
+	defer c.GetLock().Unlock()
+
 	var (
 		cComp cComponent
 		found bool
 	)
 
-	c.GetLock().Lock()
-	defer c.GetLock().Unlock()
 	if cComp, found = c.cComponents[name]; !found {
 		return nil, fmt.Errorf("unable to find component %v within %v", name, c.GetName())
 	}
@@ -330,9 +330,6 @@ func (c *Container) GetComponent(name string) (Component, error) {
 	if comp == nil {
 		return nil, errors.New("unable to find component type within cComponent")
 	}
-
-	comp.GetLock().Lock()
-	defer comp.GetLock().Unlock()
 
 	return getComponentCopy(comp)
 }
@@ -421,21 +418,8 @@ func setComponentEtag(comp Component) error {
 // getComponentCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
 // is called within a critical section or call hiearchy traces back to one.
 func getComponentCopy(comp Component) (Component, error) {
-	setComponentEtag(comp)
-	compType := reflect.TypeOf(comp).Elem()
-	compVal := reflect.ValueOf(comp).Elem().Interface()
-
-	newCTypeValue := reflect.New(compType)
-	newVal := newCTypeValue.Interface()
-
-	copyStruct(newVal, compVal)
-	return newVal.(Component), nil
-}
-
-func copyStruct(dest, src interface{}) {
-	buf := new(bytes.Buffer)
-	gob.NewEncoder(buf).Encode(src)
-	gob.NewDecoder(buf).Decode(dest)
+	cCopy := deepcopy.Copy(comp)
+	return cCopy.(Component), nil
 }
 
 func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r *http.Request) {
