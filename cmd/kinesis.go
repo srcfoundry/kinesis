@@ -13,12 +13,12 @@ import (
 func main() {
 	app := new(kinesis.App)
 	app.Name = "kinesis"
-	app.Mutex = &sync.Mutex{}
+	app.RWMutex = &sync.RWMutex{}
 	app.Add(app)
 
 	httpServer := new(common.HttpServer)
 	httpServer.Name = "httpserver"
-	httpServer.Mutex = &sync.Mutex{}
+	httpServer.RWMutex = &sync.RWMutex{}
 	app.Add(httpServer)
 
 	subscribe := make(chan interface{}, 1)

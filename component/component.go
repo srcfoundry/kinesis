@@ -110,7 +110,7 @@ type Component interface {
 	setContainer(*Container)
 	GetContainer() *Container
 
-	GetLock() *sync.Mutex
+	GetRWLock() *sync.RWMutex
 
 	setHash(uint64)
 	Hash() uint64
@@ -137,7 +137,7 @@ type SimpleComponent struct {
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
-	Mutex              *sync.Mutex `json:"-" hash:"ignore"`
+	RWMutex            *sync.RWMutex `json:"-" hash:"ignore"`
 
 	subscribers map[string]chan<- interface{}
 	callbacks   []func(context.Context, int, interface{})
@@ -235,8 +235,8 @@ func (d *SimpleComponent) GetEtag() string {
 }
 
 func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error {
-	d.GetLock().Lock()
-	defer d.GetLock().Unlock()
+	d.GetRWLock().Lock()
+	defer d.GetRWLock().Unlock()
 
 	if d.Stage > Started {
 		return fmt.Errorf("unable to add callback since %v is %v", d.GetName(), d.Stage)
@@ -251,6 +251,9 @@ func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Contex
 }
 
 func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
+	d.GetRWLock().Lock()
+	defer d.GetRWLock().Unlock()
+
 	if cbIndx >= len(d.callbacks) {
 		return fmt.Errorf("unable to find callback function at index %v within %v", cbIndx, d.GetName())
 	}
@@ -261,8 +264,8 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
-	d.GetLock().Lock()
-	defer d.GetLock().Unlock()
+	d.GetRWLock().Lock()
+	defer d.GetRWLock().Unlock()
 
 	if d.Stage > Started {
 		return fmt.Errorf("unable to subscribe since %v is %v", d.GetName(), d.Stage)
@@ -282,8 +285,8 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 }
 
 func (d *SimpleComponent) Unsubscribe(subscriber string) error {
-	d.GetLock().Lock()
-	defer d.GetLock().Unlock()
+	d.GetRWLock().Lock()
+	defer d.GetRWLock().Unlock()
 
 	if d.subscribers == nil {
 		return fmt.Errorf("unable to find %v subscribed to %v", subscriber, d.GetName())
@@ -304,10 +307,10 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 	}
 
 	// make a copy of callback functions and iterate over the copied function slice, in case the callback function removes itself from the callback function slice
-	d.GetLock().Lock()
+	d.GetRWLock().RLock()
 	callbackFuncs := make([]func(context.Context, int, interface{}), len(d.callbacks))
 	copy(callbackFuncs, d.callbacks)
-	d.GetLock().Unlock()
+	d.GetRWLock().RUnlock()
 
 	for cbIndx, callbackFunc := range callbackFuncs {
 		// each callback is executed with a max timeout of 2 seconds
@@ -331,6 +334,9 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 }
 
 func (d *SimpleComponent) notifySubscribers(notification interface{}) {
+	d.GetRWLock().RLock()
+	defer d.GetRWLock().RUnlock()
+
 	for _, subsCh := range d.subscribers {
 		subsCh <- notification
 	}
@@ -398,13 +404,13 @@ func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, 
 	return d.inbox
 }
 
-func (d *SimpleComponent) GetLock() *sync.Mutex {
-	return d.Mutex
+func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
+	return d.RWMutex
 }
 
 func (d *SimpleComponent) Notify(notification func() (context.Context, interface{}, chan<- error)) {
-	d.GetLock().Lock()
-	defer d.GetLock().Unlock()
+	d.GetRWLock().RLock()
+	defer d.GetRWLock().RUnlock()
 
 	mMux := d.getMmux()
 	if mMux == nil {

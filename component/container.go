@@ -27,8 +27,11 @@ type Container struct {
 
 	// slice to maintain the order of components being added
 	components []string
-	// map of indices to which components are found in the components slice
-	componentsIndices map[string]int
+
+	// channel maintained as a queue for adding & activating Components sequentially.
+	// Addition of components is made possible through a dedicated go routine which reads from compActivationQueue channel, thereby unblocking the caller to
+	// perform other activities like subscribing to state change notifications or just continuing with remaining execution.
+	compActivationQueue chan Component
 
 	cComponents map[string]cComponent
 	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
@@ -36,7 +39,6 @@ type Container struct {
 
 func (c *Container) Init(ctx context.Context) error {
 	c.cComponents = make(map[string]cComponent)
-	c.componentsIndices = make(map[string]int)
 	c.cHandlers = make(map[string]func(http.ResponseWriter, *http.Request))
 
 	runOnce.Do(func() {
@@ -50,16 +52,18 @@ func (c *Container) Start(ctx context.Context) error {
 	for {
 		select {
 		// proceed to shutdown container if system interrupt is received.
-		case _, ok := <-c.signalCh:
+		case osSignal, ok := <-c.signalCh:
 			if !ok {
 				log.Println("signalCh closed for", c.GetName())
 				return nil
 			}
 
+			log.Println(c.GetName(), "received", osSignal)
+
 			shutdownErrCh := make(chan error, 1)
 			notification := func() (context.Context, interface{}, chan<- error) {
 				// TODO: later change it to a context with timeout
-				log.Println("proceed to shutdown container")
+				log.Println("proceed to shutdown", c.GetName())
 				return context.TODO(), Shutdown, shutdownErrCh
 			}
 
@@ -80,28 +84,35 @@ func (c *Container) Add(comp Component) error {
 		log.Fatalln("Component name cannot be empty")
 	}
 
-	if comp != nil && comp.GetLock() == nil {
-		log.Fatalln(comp.GetName(), "mutex has not been initialized")
+	if comp != nil && comp.GetRWLock() == nil {
+		log.Fatalln(comp.GetName(), "RW mutex has not been initialized")
 	}
 
-	go func() {
-		c.componentLifecycleFSM(context.TODO(), comp)
+	if c.compActivationQueue == nil && c.GetStage() < Stopping {
+		c.compActivationQueue = make(chan Component, 1)
 
-		cComm := cComponent{}
-		err := c.toCanonical(comp, &cComm)
-		if err != nil {
-			log.Println(comp, "failed to convert to canonical type due to", err.Error())
-		}
+		// Even though components could be added asynchronously, it is activated sequentially since its being read off the compActivationQueue channel, thereby maintaining order.
+		go func() {
+			for nextComp := range c.compActivationQueue {
+				c.componentLifecycleFSM(context.TODO(), nextComp)
 
-		if _, found := c.cComponents[comp.GetName()]; found {
-			err := fmt.Errorf("%v already activated", comp.GetName())
-			log.Println("failed to add component due to", err.Error())
-		}
-		c.cComponents[comp.GetName()] = cComm
-		c.components = append(c.components, comp.GetName())
-		c.componentsIndices[comp.GetName()] = len(c.components) - 1
-	}()
+				cComm := cComponent{}
+				err := c.toCanonical(nextComp, &cComm)
+				if err != nil {
+					log.Println(nextComp, "failed to convert to canonical type due to", err.Error())
+				}
 
+				if _, found := c.cComponents[nextComp.GetName()]; found {
+					err := fmt.Errorf("%v already activated", nextComp.GetName())
+					log.Println("failed to add component due to", err.Error())
+				}
+				c.cComponents[nextComp.GetName()] = cComm
+				c.components = append(c.components, nextComp.GetName())
+			}
+		}()
+	}
+
+	c.compActivationQueue <- comp
 	return nil
 }
 
@@ -235,6 +246,12 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 	}
 }
 
+// compare if the passed component matches this container type
+func (c *Container) Matches(comp Component) bool {
+	containerAddress, compAddress := fmt.Sprintf("%p", Component(c)), fmt.Sprintf("%p", comp)
+	return containerAddress == compAddress
+}
+
 // toCanonical enhances the component and assigns it to the passed cComponent type
 func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	// assign reference of container to the component getting added only if the names do not match.
@@ -264,22 +281,24 @@ returnnoerror:
 	return nil
 }
 
+// 1) A container (which is also a component) could be added and maintained within its own datastructures to bootstrap itself. 2) It could also be added to a
+// parent container and maintained within that container. 3) There ia a rare possibility that the container which is boostraping itself would appear later in
+// the LIFO order, than a component it holds.
+//
+// So would have to factor the afore mentioned cases while "Stopping" a container in order that it has clean and consise logic.
+// Note that the method sends Shutdown notification to the encompassed components and relies on removeComponent method to properly update the datastructures.
+// Both methods maintain clear separation of responsibilities.
 func (c *Container) Stop(ctx context.Context) error {
 	// proceed to stop components in LIFO order
 	last := len(c.components) - 1
 
 	for last >= 0 {
 		cName := c.components[last]
-		var (
-			cComp cComponent
-			found bool
-		)
+		cComp, found := c.cComponents[cName]
 
-		if cComp, found = c.cComponents[cName]; !found || cComp.comp == nil {
+		if !found || cComp.comp == nil {
 			log.Println(cName, "component no longer found within container", c.GetName())
-			// after iterating in LIFO order, the current container would be one left in the list. ignore sending Shutdown to itself.
-			// so maintaining check if the current component cComp.comp.GetName() != c.GetName()
-		} else if cComp.comp.GetName() != c.GetName() {
+		} else if !c.Matches(cComp.comp) {
 			log.Println("sending", Shutdown, "signal to", cName)
 			errCh := make(chan error)
 			cComp.comp.Notify(func() (context.Context, interface{}, chan<- error) {
@@ -291,17 +310,24 @@ func (c *Container) Stop(ctx context.Context) error {
 			}
 		}
 
-		c.components = c.components[:last]
-		last = len(c.components) - 1
-		if found {
-			delete(c.cComponents, cName)
-			delete(c.componentsIndices, cName)
+		// return if the last remaining component is the same container as this. The following check would be sufficient to cover cases 1 & 3.
+		// For case 3 scenario, last would != 0, thereby it skips the bootstrapped container and continues with shutting down all other components
+		// until the skipped container is the only component left. At that point last would be == 0, and the check would be true (which matches case 1)
+		if last == 0 && c.Matches(cComp.comp) {
+			return nil
 		}
+
+		last = len(c.components) - 1
 	}
 
 	defer func() {
-		signal.Stop(c.signalCh)
+		if c.compActivationQueue != nil {
+			close(c.compActivationQueue)
+			c.compActivationQueue = nil
+		}
+
 		if c.signalCh != nil {
+			signal.Stop(c.signalCh)
 			close(c.signalCh)
 			c.signalCh = nil
 		}
@@ -314,8 +340,8 @@ func (c *Container) Stop(ctx context.Context) error {
 // fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
 // be copied over.
 func (c *Container) GetComponent(name string) (Component, error) {
-	c.GetLock().Lock()
-	defer c.GetLock().Unlock()
+	c.GetRWLock().RLock()
+	defer c.GetRWLock().RUnlock()
 
 	var (
 		cComp cComponent
@@ -364,19 +390,26 @@ func (c *Container) removeHttpHandlers(comp Component) {
 
 // removeComponent removes a component from a container in the event its being shutdown
 func (c *Container) removeComponent(name string) {
-	c.GetLock().Lock()
-	defer c.GetLock().Unlock()
+	c.GetRWLock().Lock()
+	defer c.GetRWLock().Unlock()
 
 	delete(c.cComponents, name)
 
-	indx, found := -1, false
-	if indx, found = c.componentsIndices[name]; !found {
+	indx, found, cName := -1, false, ""
+	for indx, cName = range c.components {
+		if cName == name {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		log.Println("unable to find", name, "to remove, within", c.GetName())
 		return
 	}
 
 	// removing component name from silce at indx
 	c.components = append(c.components[:indx], c.components[indx+1:]...)
-	delete(c.componentsIndices, name)
 }
 
 func stateChangeCallbacker(comp Component) func(context.Context, int, interface{}) {
