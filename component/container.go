@@ -13,10 +13,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/google/uuid"
-	"github.com/mitchellh/hashstructure/v2"
-	"github.com/mohae/deepcopy"
 )
 
 var runOnce sync.Once
@@ -82,6 +78,10 @@ func (c *Container) Start(ctx context.Context) error {
 func (c *Container) Add(comp Component) error {
 	if comp != nil && len(comp.GetName()) <= 0 {
 		log.Fatalln("Component name cannot be empty")
+	}
+
+	if !c.Matches(comp) && comp.GetName() == c.GetName() {
+		log.Fatalln("Component name could not have same name as container")
 	}
 
 	if comp != nil && comp.GetRWLock() == nil {
@@ -395,9 +395,9 @@ func (c *Container) removeComponent(name string) {
 
 	delete(c.cComponents, name)
 
-	indx, found, cName := -1, false, ""
-	for indx, cName = range c.components {
-		if cName == name {
+	indx, found := len(c.components)-1, false
+	for ; indx >= 0; indx-- {
+		if c.components[indx] == name {
 			found = true
 			break
 		}
@@ -417,7 +417,7 @@ func stateChangeCallbacker(comp Component) func(context.Context, int, interface{
 		switch notification {
 		case Active, Inactive:
 			log.Println("proceeding to set new ETag for", comp.GetName())
-			setComponentEtag(comp)
+			SetComponentEtag(comp)
 		case Stopping:
 			err := comp.RemoveCallback(cbIndx)
 			if err != nil {
@@ -426,33 +426,6 @@ func stateChangeCallbacker(comp Component) func(context.Context, int, interface{
 		default:
 		}
 	}
-}
-
-// setComponentEtag calculates the component hash and sets an Entity Tag(ETag) to indicate a version of the component.
-// this function is not thread safe. caller should ensure that the function is called within a critical section or
-// call hiearchy traces back to one.
-func setComponentEtag(comp Component) error {
-	// compute hash of the component object and compare with existing hash
-	newHash, err := hashstructure.Hash(comp, hashstructure.FormatV2, nil)
-	if err != nil {
-		return err
-	}
-
-	// assign new etag if component instance hash has changed. this is required in order to resolve conflicts arising
-	// due to concurrent updates through messages.
-	if newHash != comp.Hash() {
-		comp.setHash(newHash)
-		etag := uuid.New()
-		comp.setEtag(etag.String())
-	}
-	return nil
-}
-
-// getComponentCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
-// is called within a critical section or call hiearchy traces back to one.
-func getComponentCopy(comp Component) (Component, error) {
-	cCopy := deepcopy.Copy(comp)
-	return cCopy.(Component), nil
 }
 
 func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r *http.Request) {

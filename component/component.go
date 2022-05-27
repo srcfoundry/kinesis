@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/mitchellh/hashstructure/v2"
+	"github.com/mohae/deepcopy"
 )
 
 type (
@@ -447,6 +451,34 @@ func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	MarshallToHttpResponseWriter(w, comp)
+}
+
+// SetComponentEtag calculates the component hash and sets an Entity Tag(ETag) to indicate a version of the component.
+// this function is not thread safe. caller should ensure that the function is called within a critical section or
+// call hiearchy traces back to one.
+func SetComponentEtag(comp Component) error {
+	// compute hash of the component object and compare with existing hash
+	newHash, err := hashstructure.Hash(comp, hashstructure.FormatV2, nil)
+	if err != nil {
+		return err
+	}
+
+	// assign new etag if component instance hash has changed. this is required in order to resolve conflicts arising
+	// due to concurrent updates through messages.
+	if newHash != comp.Hash() {
+		comp.setHash(newHash)
+		etag := uuid.New()
+		comp.setEtag(etag.String())
+	}
+	return nil
+}
+
+// getComponentCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
+// is called within a critical section or call hiearchy traces back to one.
+func getComponentCopy(comp Component) (Component, error) {
+	SetComponentEtag(comp)
+	cCopy := deepcopy.Copy(comp)
+	return cCopy.(Component), nil
 }
 
 func MarshallToHttpResponseWriter(w http.ResponseWriter, comp Component) {
