@@ -265,3 +265,77 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 // 		}
 // 	}
 // }
+
+func Test_validateName(t *testing.T) {
+	type args struct {
+		comp Component
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name:    "validateName_validLowerCaseChars",
+			args:    args{comp: &SimpleComponent{Name: "lowercase"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validUpperCaseChars",
+			args:    args{comp: &SimpleComponent{Name: "UPPERCASE"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validCamelCaseChars",
+			args:    args{comp: &SimpleComponent{Name: "camelCase"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validNumerals",
+			args:    args{comp: &SimpleComponent{Name: "98765430"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validNumeralsAndUpperLowerChars",
+			args:    args{comp: &SimpleComponent{Name: "789lowerUPPER4512"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validCharsWithPeriod",
+			args:    args{comp: &SimpleComponent{Name: "789lower.UPPER4512"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validCharsWithHyphen",
+			args:    args{comp: &SimpleComponent{Name: "789lower-UPPER4512"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validCharsWithUnderscore",
+			args:    args{comp: &SimpleComponent{Name: "789lower_UPPER4512"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_validCharsWithTilde",
+			args:    args{comp: &SimpleComponent{Name: "789lower~UPPER4512"}},
+			wantErr: false,
+		},
+		{
+			name:    "validateName_invalidPercentChar",
+			args:    args{comp: &SimpleComponent{Name: "789lower%UPPER4512"}},
+			wantErr: true,
+		},
+		{
+			name:    "validateName_invalidSpaceChar",
+			args:    args{comp: &SimpleComponent{Name: "789lower UPPER4512"}},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateName(tt.args.comp); (err != nil) != tt.wantErr {
+				t.Errorf("validateName() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

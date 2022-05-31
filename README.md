@@ -28,3 +28,8 @@ In addition to modelling container <-> component heirachies emphasis is also pro
 - [X] check mechanism for returning copy of initialized component from container.
 - [X] using component hash & etag to accept/reject component type messages to update.
 - [X] add more UT to cover all mechanisms developed till now.
+- [] additional UT cases to add: 
+    - [] simulate app os signal interrupt handling.
+    - [X] component name permissable character check.
+    - [] check for adding route to exported http handler func.
+    - [] check sequential order of component activation.

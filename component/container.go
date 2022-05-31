@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -76,16 +77,17 @@ func (c *Container) Start(ctx context.Context) error {
 }
 
 func (c *Container) Add(comp Component) error {
-	if comp != nil && len(comp.GetName()) <= 0 {
-		log.Fatalln("Component name cannot be empty")
+	err := validateName(comp)
+	if err != nil {
+		return err
 	}
 
 	if !c.Matches(comp) && comp.GetName() == c.GetName() {
-		log.Fatalln("Component name could not have same name as container")
+		return fmt.Errorf("Component name could not have same name as container")
 	}
 
 	if comp != nil && comp.GetRWLock() == nil {
-		log.Fatalln(comp.GetName(), "RW mutex has not been initialized")
+		return fmt.Errorf("RW mutex has not been initialized for %s", comp.GetName())
 	}
 
 	if c.compActivationQueue == nil && c.GetStage() < Stopping {
@@ -254,17 +256,12 @@ func (c *Container) Matches(comp Component) bool {
 
 // toCanonical enhances the component and assigns it to the passed cComponent type
 func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
-	// assign reference of container to the component getting added only if the names do not match.
-	if comp.GetName() != c.GetName() {
+	// assign reference of container to the component only if its not the current container being bootstrapped.
+	if !c.Matches(comp) {
 		comp.setContainer(c)
 	}
 
-	cName := comp.GetName()
-	if len(cName) <= 0 {
-		log.Fatalln("Component name cannot be empty")
-	}
-	cName = strings.ToLower(cName)
-	cComp.cName = cName
+	cComp.cName = comp.GetName()
 	cComp.comp = comp
 
 	handlers := deriveHttpHandlers(comp)
@@ -281,12 +278,12 @@ returnnoerror:
 	return nil
 }
 
-// 1) A container (which is also a component) could be added and maintained within its own datastructures to bootstrap itself. 2) It could also be added to a
+// 1) A container (which is also a component) could be added and maintained within its own data structures to bootstrap itself. 2) It could also be added to a
 // parent container and maintained within that container. 3) There ia a rare possibility that the container which is boostraping itself would appear later in
 // the LIFO order, than a component it holds.
 //
 // So would have to factor the afore mentioned cases while "Stopping" a container in order that it has clean and consise logic.
-// Note that the method sends Shutdown notification to the encompassed components and relies on removeComponent method to properly update the datastructures.
+// Note that the method sends Shutdown notification to the encompassed components and relies on removeComponent method to properly update the data structures.
 // Both methods maintain clear separation of responsibilities.
 func (c *Container) Stop(ctx context.Context) error {
 	// proceed to stop components in LIFO order
@@ -412,6 +409,29 @@ func (c *Container) removeComponent(name string) {
 	c.components = append(c.components[:indx], c.components[indx+1:]...)
 }
 
+func validateName(comp Component) error {
+	if comp == nil {
+		return fmt.Errorf("passed nil Component reference")
+	}
+
+	if len(comp.GetName()) <= 0 {
+		return fmt.Errorf("Component name cannot be empty")
+	}
+
+	// validation for allowed unreserved charaters https://datatracker.ietf.org/doc/html/rfc3986#section-2.3
+	allowedChars := ".a-zA-Z0-9~_-"
+	foundInvalidChars, err := regexp.MatchString("[^\\"+allowedChars+"]+", comp.GetName())
+	if err != nil {
+		return nil
+	}
+
+	if foundInvalidChars {
+		return fmt.Errorf("%s contains invalid characters. Allowed characters are: %s", comp.GetName(), allowedChars)
+	}
+
+	return nil
+}
+
 func stateChangeCallbacker(comp Component) func(context.Context, int, interface{}) {
 	return func(ctx context.Context, cbIndx int, notification interface{}) {
 		switch notification {
@@ -429,7 +449,6 @@ func stateChangeCallbacker(comp Component) func(context.Context, int, interface{
 }
 
 func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r *http.Request) {
-	cName := strings.ToLower(comp.GetName())
 	// proceeding to assign URI for the component. for that we would need to travserse all the way to top container.
 	rootC := comp.GetContainer()
 	paths := []string{}
@@ -444,7 +463,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 			cURI += paths[i] + "/"
 		}
 	}
-	cURI += cName
+	cURI += comp.GetName()
 
 	cType := reflect.TypeOf(comp)
 	cTypeVal := reflect.ValueOf(comp)
@@ -455,7 +474,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 	for i := 0; i < cTypeVal.NumMethod(); i++ {
 		methodVal := cTypeVal.Method(i)
 
-		// check for methods matching func signature of http handler
+		// additionally check for any exported methods matching http handler func signature
 		if httpHandlerFunc, ok := methodVal.Interface().(func(http.ResponseWriter, *http.Request)); ok {
 			methodName := cType.Method(i).Name
 			// ServeHTTP becomes the default URI to the component
@@ -464,7 +483,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 				// set the component URI
 				comp.setURI(cURI)
 			} else {
-				handlerURI := cURI + "/" + strings.ToLower(methodName)
+				handlerURI := cURI + "/" + methodName
 				handlers[handlerURI] = httpHandlerFunc
 			}
 		}
