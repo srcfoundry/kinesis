@@ -135,7 +135,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		comp.setStage(Initializing)
 		ctx := context.Background()
 		defer func(comp Component) {
-			c.componentLifecycleFSM(context.TODO(), comp)
+			go c.componentLifecycleFSM(context.TODO(), comp)
 		}(comp)
 
 		// TODO: test for init new component from within init of a component
