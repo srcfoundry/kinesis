@@ -2,7 +2,12 @@ package component
 
 import (
 	"context"
+	"errors"
+	"os"
 	"reflect"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -33,6 +38,7 @@ outer:
 func TestContainer_Add(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
+	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type args struct {
@@ -46,7 +52,7 @@ func TestContainer_Add(t *testing.T) {
 		{
 			name: "Add_SimpleComponent_test2",
 			args: args{
-				comp: &SimpleComponent{Name: "simpleTestComponent"},
+				comp: &SimpleComponent{Name: "simpleTestComponent", RWMutex: &sync.RWMutex{}},
 			},
 			wantErr: false,
 		},
@@ -60,12 +66,52 @@ func TestContainer_Add(t *testing.T) {
 			}
 		})
 	}
-	shutdownTestContainer(c, 2*time.Second)
+	shutdownTestContainer(c, 5*time.Second)
+}
+
+func TestContainer_HandleInterrupt(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.RWMutex = &sync.RWMutex{}
+	c.Add(c)
+
+	type args struct {
+		comp Component
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "SimpleComponent_HandleInterrupt",
+			args: args{
+				comp: &SimpleComponent{Name: "simpleTestComponent", RWMutex: &sync.RWMutex{}},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
+				t.Errorf("Container.Add() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+
+	time.Sleep(2 * time.Second)
+	pid := syscall.Getpid()
+	currProcess, _ := os.FindProcess(pid)
+	currProcess.Signal(syscall.SIGINT)
+	time.Sleep(2 * time.Second)
 }
 
 func TestContainer_GetComponentCopy(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
+	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type TestSimpleType struct {
@@ -82,10 +128,13 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 	)
 	testComp := &TestSimpleType{}
 	testComp.Name = "simpleTestComponent"
+	testComp.RWMutex = &sync.RWMutex{}
 	testComp.String1 = stringVal
 	testComp.Int1 = intVal
 	testComp.MapValues = mapVals
 	c.Add(testComp)
+
+	time.Sleep(1 * time.Second)
 
 	type args struct {
 		name string
@@ -143,6 +192,7 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
+	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type TestSimpleType struct {
@@ -160,10 +210,13 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	)
 	testComp := &TestSimpleType{}
 	testComp.Name = testComponentName
+	testComp.RWMutex = &sync.RWMutex{}
 	testComp.String1 = stringVal
 	testComp.Int1 = intVal
 	testComp.MapValues = mapVals
 	c.Add(testComp)
+
+	time.Sleep(1 * time.Second)
 
 	newCompCopy, _ := c.GetComponent(testComponentName)
 	errCh := make(chan error, 1)
@@ -204,6 +257,80 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	}
 
 	shutdownTestContainer(c, 2*time.Second)
+}
+
+func TestContainer_VerifyComponentInitOrder(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.RWMutex = &sync.RWMutex{}
+	c.Add(c)
+
+	type TestSimpleType struct {
+		SimpleComponent
+	}
+
+	testComp1 := &TestSimpleType{}
+	testComp1.Name = "simpleTestComponent1"
+	testComp1.RWMutex = &sync.RWMutex{}
+
+	testComp2 := &TestSimpleType{}
+	testComp2.Name = "simpleTestComponent2"
+	testComp2.RWMutex = &sync.RWMutex{}
+
+	testComp3 := &TestSimpleType{}
+	testComp3.Name = "simpleTestComponent3"
+	testComp3.RWMutex = &sync.RWMutex{}
+
+	type args struct {
+		comp Component
+	}
+	tests := []struct {
+		name      string
+		args      args
+		wantErr   bool
+		wantOrder []string
+	}{
+		{
+			name: "Add_simpleTestComponent1",
+			args: args{
+				comp: testComp1,
+			},
+			wantErr:   false,
+			wantOrder: []string{"testContainer", "simpleTestComponent1"},
+		},
+		{
+			name: "Add_simpleTestComponent2",
+			args: args{
+				comp: testComp2,
+			},
+			wantErr:   false,
+			wantOrder: []string{"testContainer", "simpleTestComponent1", "simpleTestComponent2"},
+		},
+		{
+			name: "Add_simpleTestComponent3",
+			args: args{
+				comp: testComp3,
+			},
+			wantErr:   false,
+			wantOrder: []string{"testContainer", "simpleTestComponent1", "simpleTestComponent2", "simpleTestComponent3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
+				t.Errorf("VerifyComponentInitOrder add component error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			time.Sleep(1 * time.Second)
+
+			if strings.Join(c.components, ",") != strings.Join(tt.wantOrder, ",") {
+				t.Errorf("VerifyComponentInitOrder component order = %v, wantOrder %v", c.components, tt.wantOrder)
+			}
+		})
+	}
+	shutdownTestContainer(c, 2*time.Second)
+
 }
 
 // TODO: failing test case. investigate later
@@ -338,4 +465,55 @@ func Test_validateName(t *testing.T) {
 			}
 		})
 	}
+}
+
+type TestRestartableSimpleType struct {
+	SimpleComponent
+	toggleStart bool
+}
+
+func (d *TestRestartableSimpleType) Start(context.Context) error {
+	if !d.toggleStart {
+		d.toggleStart = true
+		return errors.New("simulating error to start TestRestartableSimpleType")
+	}
+	return nil
+}
+
+func TestContainer_AddRestartableComponent(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.RWMutex = &sync.RWMutex{}
+	c.Add(c)
+
+	restartableComponent := &TestRestartableSimpleType{}
+	restartableComponent.Name = "restartableTestComponent"
+	restartableComponent.RWMutex = &sync.RWMutex{}
+
+	type args struct {
+		comp Component
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "AddRestartableComponent",
+			args: args{
+				comp: restartableComponent,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			time.Sleep(10 * time.Second)
+			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
+				t.Errorf("Container.Add() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+	shutdownTestContainer(c, 15*time.Second)
 }

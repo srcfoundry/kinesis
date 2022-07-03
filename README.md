@@ -20,16 +20,15 @@ In addition to modelling container <-> component heirachies emphasis is also pro
 
 ### TODO
 - [X] add dynamic http routes addition/deletion
-- [] design on demo app to showcase functionalities
+- [X] design on demo app to showcase functionalities
 - [] add persistence capability for stateful app
-- [] defer registering for OS signal notifications until root container initialization
 - [X] implement container Stop to stop components maintained within it
 - [X] root container to block until interrupt signal from OS
 - [X] check mechanism for returning copy of initialized component from container.
 - [X] using component hash & etag to accept/reject component type messages to update.
 - [X] add more UT to cover all mechanisms developed till now.
-- [] additional UT cases to add: 
-    - [] simulate app os signal interrupt handling.
+- [X] additional UT cases to add: 
+    - [X] simulate app os signal interrupt handling.
     - [X] component name permissable character check.
-    - [] check for adding route to exported http handler func.
-    - [] check sequential order of component activation.
+    - [X] check for adding route to exported http handler func.
+    - [X] check sequential order of component activation.

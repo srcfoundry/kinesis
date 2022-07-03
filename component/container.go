@@ -87,7 +87,7 @@ func (c *Container) Add(comp Component) error {
 	}
 
 	if comp != nil && comp.GetRWLock() == nil {
-		return fmt.Errorf("RW mutex has not been initialized for %s", comp.GetName())
+		log.Fatalf("RW mutex has not been initialized for %s", comp.GetName())
 	}
 
 	if c.compActivationQueue == nil && c.GetStage() < Stopping {
