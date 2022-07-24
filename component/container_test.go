@@ -3,6 +3,7 @@ package component
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -18,9 +19,7 @@ func shutdownTestContainer(c *Container, delay time.Duration) {
 
 	go func() {
 		time.Sleep(delay)
-		c.Notify(func() (context.Context, interface{}, chan<- error) {
-			return nil, Shutdown, errCh
-		})
+		c.Notify(context.TODO(), ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 	}()
 
 outer:
@@ -30,7 +29,8 @@ outer:
 			if notification == Stopped {
 				break outer
 			}
-		case <-errCh:
+		case err := <-errCh:
+			fmt.Println("obtained error", err)
 		}
 	}
 }
@@ -66,7 +66,7 @@ func TestContainer_Add(t *testing.T) {
 			}
 		})
 	}
-	shutdownTestContainer(c, 5*time.Second)
+	shutdownTestContainer(c, 10*time.Second)
 }
 
 func TestContainer_HandleInterrupt(t *testing.T) {
@@ -186,7 +186,7 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 		})
 	}
 
-	shutdownTestContainer(c, 2*time.Second)
+	shutdownTestContainer(c, 15*time.Second)
 }
 
 func TestContainer_NotifyValidComponentCopy(t *testing.T) {
@@ -221,13 +221,7 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	newCompCopy, _ := c.GetComponent(testComponentName)
 	errCh := make(chan error, 1)
 
-	testComp.Notify(func() (context.Context, interface{}, chan<- error) {
-		return nil, newCompCopy, errCh
-	})
-
-	type args struct {
-		name string
-	}
+	testComp.Notify(nil, ComponentMsgId, map[MsgClassifierId]interface{}{ComponentMsgId: testComp.GetName()}, newCompCopy)
 
 	tests := []struct {
 		name            string
@@ -256,7 +250,7 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 		})
 	}
 
-	shutdownTestContainer(c, 2*time.Second)
+	shutdownTestContainer(c, 10*time.Second)
 }
 
 func TestContainer_VerifyComponentInitOrder(t *testing.T) {
@@ -329,7 +323,7 @@ func TestContainer_VerifyComponentInitOrder(t *testing.T) {
 			}
 		})
 	}
-	shutdownTestContainer(c, 2*time.Second)
+	shutdownTestContainer(c, 10*time.Second)
 
 }
 
@@ -517,3 +511,137 @@ func TestContainer_AddRestartableComponent(t *testing.T) {
 	}
 	shutdownTestContainer(c, 15*time.Second)
 }
+
+type testSimpleAsyncType struct {
+	SimpleComponent
+	testInbox chan func() (context.Context, interface{}, chan<- error)
+}
+
+// func Test_syncMessageProcessing(t *testing.T) {
+// 	c := &Container{}
+// 	c.Name = "testContainer"
+// 	c.RWMutex = &sync.RWMutex{}
+// 	c.Add(c)
+
+// 	testComp1 := &testSimpleAsyncType{}
+// 	testComp1.Name = "simpleTestComponent1"
+// 	testComp1.RWMutex = &sync.RWMutex{}
+// 	c.Add(testComp1)
+
+// 	time.Sleep(1 * time.Second)
+
+// 	testComp2 := &testSimpleAsyncType{}
+// 	testComp2.Name = "simpleTestComponent2"
+// 	testComp2.RWMutex = &sync.RWMutex{}
+// 	c.Add(testComp2)
+
+// 	time.Sleep(1 * time.Second)
+
+// 	errCh := make(chan error, 1)
+// 	ctx := context.Background()
+
+// 	// set up testComp2 inbox to receive messages wrapped as a func
+// 	testComp2.testInbox = make(chan func() (context.Context, interface{}, chan<- error), 1)
+// 	testComp2.SetInbox(testComp2.testInbox)
+
+// 	// notify testComp2 with empty struct
+// 	testComp2.Notify(ctx, struct{}{}, errCh)
+
+// 	// ensure for each notification, a new error channel is created. would change if notify supports multi values.
+// 	errCh = make(chan error, 1)
+
+// 	// notify testComp2 with string value
+// 	testComp2.Notify(ctx, "testString", errCh)
+
+// 	errCh = make(chan error, 1)
+
+// 	// notify testComp2 with int value
+// 	testComp2.Notify(ctx, 1207, errCh)
+
+// 	tests := []struct {
+// 		name      string
+// 		wantValue interface{}
+// 	}{
+// 		{
+// 			name:      "syncMessageProcessingEmptyStruct",
+// 			wantValue: struct{}{},
+// 		},
+// 		{
+// 			name:      "syncMessageProcessingString",
+// 			wantValue: "testString",
+// 		},
+// 		{
+// 			name:      "syncMessageProcessingInteger",
+// 			wantValue: 1207,
+// 		},
+// 	}
+
+// 	for _, tt := range tests {
+// 		t.Run(tt.name, func(t *testing.T) {
+// 			msgFunc := <-testComp2.testInbox
+// 			_, value, _ := msgFunc()
+// 			if value != tt.wantValue {
+// 				t.Errorf("Notify value = %v, wantValue %v", value, tt.wantValue)
+// 				return
+// 			}
+// 		})
+// 	}
+
+// 	shutdownTestContainer(c, 2*time.Second)
+// }
+
+// func Test_syncCtxTimedoutMessageProcessing(t *testing.T) {
+// 	c := &Container{}
+// 	c.Name = "testContainer"
+// 	c.RWMutex = &sync.RWMutex{}
+// 	c.Add(c)
+
+// 	testComp1 := &testSimpleAsyncType{}
+// 	testComp1.Name = "simpleTestComponent1"
+// 	testComp1.RWMutex = &sync.RWMutex{}
+// 	c.Add(testComp1)
+
+// 	time.Sleep(1 * time.Second)
+
+// 	testComp2 := &testSimpleAsyncType{}
+// 	testComp2.Name = "simpleTestComponent2"
+// 	testComp2.RWMutex = &sync.RWMutex{}
+// 	c.Add(testComp2)
+
+// 	time.Sleep(1 * time.Second)
+
+// 	errCh := make(chan error, 1)
+
+// 	ctx := context.Background()
+// 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+// 	defer cancel()
+
+// 	// set up testComp2 inbox to receive messages wrapped as a func
+// 	testComp2.testInbox = make(chan func() (context.Context, interface{}, chan<- error), 1)
+// 	testComp2.SetInbox(testComp2.testInbox)
+
+// 	testComp2.Notify(ctx, struct{}{}, errCh)
+
+// 	tests := []struct {
+// 		name      string
+// 		wantValue interface{}
+// 	}{
+// 		{
+// 			name:      "syncMessageProcessingEmptyStruct",
+// 			wantValue: struct{}{},
+// 		},
+// 	}
+
+// 	for _, tt := range tests {
+// 		t.Run(tt.name, func(t *testing.T) {
+// 			msgFunc := <-testComp2.testInbox
+// 			_, value, _ := msgFunc()
+// 			if value != tt.wantValue {
+// 				t.Errorf("Notify value = %v, wantValue %v", value, tt.wantValue)
+// 				return
+// 			}
+// 		})
+// 	}
+
+// 	shutdownTestContainer(c, 2*time.Second)
+// }

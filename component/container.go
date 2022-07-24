@@ -57,17 +57,10 @@ func (c *Container) Start(ctx context.Context) error {
 
 			log.Println(c.GetName(), "received", osSignal)
 
-			shutdownErrCh := make(chan error, 1)
-			notification := func() (context.Context, interface{}, chan<- error) {
-				// TODO: later change it to a context with timeout
-				log.Println("proceed to shutdown", c.GetName())
-				return context.TODO(), Shutdown, shutdownErrCh
-			}
-
-			c.Notify(notification)
-
-			shutdownErr, isErrChOpen := <-shutdownErrCh
-			if shutdownErr == nil && !isErrChOpen {
+			// TODO: later change it to a context with timeout
+			log.Println("proceed to shutdown", c.GetName())
+			err := c.Notify(context.TODO(), ControlMsgId, nil, Shutdown)
+			if err == nil {
 				log.Println("Shutdown notification was successfully sent to", c.GetName())
 				return nil
 			}
@@ -178,50 +171,46 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		if comp.GetState() != Active {
 			return
 		}
-		c.startMmux(ctx, comp)
+		go c.startMmux(ctx, comp)
 	}(ctx, comp)
 
 	for msgFunc := range comp.getMmux() {
-		msgCtx, msg, errCh := msgFunc()
+		msgCtx, msgClassId, msgClassLookup, msg, errCh := msgFunc()
+		msgClass := msgClassLookup[msgClassId]
 
-		switch msgType := msg.(type) {
-		case controlMsg:
-			switch msgType {
+		switch msgClassId {
+		case ControlMsgId:
+			switch msgClass {
+			//additional control handling cases goes here
 			case Shutdown:
 				comp.setStage(Stopping)
 				err := c.componentLifecycleFSM(msgCtx, comp)
-				if err != nil {
-					errCh <- err
-				}
-				close(errCh)
+				errCh <- err
 				if err == nil {
 					return
 				}
 			}
-		case Component:
-			// check if message is a copy of the same underlying concrete component type
-			compConcreteType, msgCompConcreteType := reflect.TypeOf(comp).Elem(), reflect.TypeOf(msg).Elem()
-			if compConcreteType == msgCompConcreteType {
-				// validate if etag of the copy is current or not
-				if comp.GetEtag() != msgType.GetEtag() {
-					errCh <- errors.New("component copy is not current due to mismatched etag")
-					close(errCh)
-					break
+		case ComponentMsgId:
+			switch msgClass {
+			case comp.GetName():
+				// check if message is a copy of the same underlying concrete component type
+				msgCompType, compConcreteType, msgCompConcreteType := msg.(Component), reflect.TypeOf(comp).Elem(), reflect.TypeOf(msg).Elem()
+				if compConcreteType == msgCompConcreteType {
+					// validate if etag of the copy is current or not
+					if comp.GetEtag() != msgCompType.GetEtag() {
+						errCh <- errors.New("component copy is not current due to mismatched etag")
+						break
+					}
 				}
+				goto forwardMessage
+			default:
+				goto forwardMessage
 			}
-			goto sendToInbox
-		default:
-			goto sendToInbox
-		}
 
-	sendToInbox:
-		inbox := comp.getInbox()
-		if inbox == nil {
-			close(errCh)
-			continue
+		forwardMessage:
+			handler := comp.getMessageHandler(msgClass.(string))
+			errCh <- handler(msgCtx, msg)
 		}
-		inbox <- msgFunc
-
 	}
 }
 
@@ -297,11 +286,8 @@ func (c *Container) Stop(ctx context.Context) error {
 			log.Println(cName, "component no longer found within container", c.GetName())
 		} else if !c.Matches(cComp.comp) {
 			log.Println("sending", Shutdown, "signal to", cName)
-			errCh := make(chan error)
-			cComp.comp.Notify(func() (context.Context, interface{}, chan<- error) {
-				return context.TODO(), Shutdown, errCh
-			})
-			err := <-errCh
+
+			err := cComp.comp.Notify(context.TODO(), ControlMsgId, nil, Shutdown)
 			if err != nil {
 				return err
 			}

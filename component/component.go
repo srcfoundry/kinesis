@@ -3,6 +3,7 @@ package component
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/mohae/deepcopy"
+)
+
+// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with a lookup map in determining the
+// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
+type MsgClassifierId string
+
+const (
+	ControlMsgId   MsgClassifierId = "ControlMsgId"   // ControlMsgId to classify controlMsg
+	ComponentMsgId MsgClassifierId = "ComponentMsgId" // ComponentMsgId to classify any Component type being passed
 )
 
 type (
@@ -76,10 +86,11 @@ type Component interface {
 	Start(context.Context) error
 	Stop(context.Context) error
 
-	// Notify could be used as a primary means to asynchronously send any type of message to a component, wrapped as a function. Once the message is processed
-	// by the receiving component, proceed to close the error channel within the receiving component, to indicate to the sender that it had finished processing
-	// the message. In event of any error, the receiving component could pass along the error on the error channel before closing the channel.
-	Notify(func() (context.Context, interface{}, chan<- error))
+	// Notify could be used to synchronously send any type of message to a component.
+	//
+	// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with msgClassLookup in determining the
+	// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
+	Notify(ctx context.Context, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error
 
 	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
 	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
@@ -100,12 +111,12 @@ type Component interface {
 
 	Unsubscribe(subscriber string) error
 
-	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue to
-	// receive messages until the returned notification channel is closed.
-	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
-	getInbox() chan func() (context.Context, interface{}, chan<- error)
+	// Set message handler functions for any message class types. Components could define its own message classifications.
+	SetMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error)
+	getMessageHandler(msgClass string) func(context.Context, interface{}) error
+	DefaultMessageHandler(context.Context, interface{}) error
 
-	getMmux() chan func() (context.Context, interface{}, chan<- error)
+	getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
 
 	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic for exponential backoff
 	// to return the delay duration between restarts.
@@ -137,11 +148,12 @@ type SimpleComponent struct {
 	State     state `json:"state"`
 
 	// message mux
-	mmux chan func() (context.Context, interface{}, chan<- error)
+	mmux            chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
+	messageHandlers map[string]func(context.Context, interface{}) error
 
-	inbox              chan func() (context.Context, interface{}, chan<- error)
-	isMessagingStopped chan struct{}
-	RWMutex            *sync.RWMutex `json:"-" hash:"ignore"`
+	inbox chan func() (context.Context, interface{}, chan<- error)
+	//isMessagingStopped chan struct{}
+	RWMutex *sync.RWMutex `json:"-" hash:"ignore"`
 
 	subscribers map[string]chan<- interface{}
 	callbacks   []func(context.Context, int, interface{})
@@ -160,14 +172,10 @@ func (d *SimpleComponent) GetURI() string {
 }
 
 func (d *SimpleComponent) preInit() {
-	d.mmux = make(chan func() (context.Context, interface{}, chan<- error), 1)
+	d.mmux = make(chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error), 1)
 }
 
 func (d *SimpleComponent) tearDown() {
-	if d.isMessagingStopped != nil {
-		close(d.isMessagingStopped)
-	}
-
 	if d.mmux != nil {
 		close(d.mmux)
 		d.mmux = nil
@@ -360,8 +368,10 @@ func (d *SimpleComponent) Start(context.Context) error {
 
 	for msgFunc := range inbox {
 		// process msgFunc
-		_, msg, _ := msgFunc()
+		_, msg, errCh := msgFunc()
 		fmt.Println(msg)
+		errCh <- nil
+
 	}
 
 	return nil
@@ -385,23 +395,26 @@ func (d *SimpleComponent) GetContainer() *Container {
 	return d.container
 }
 
-func (d *SimpleComponent) getMmux() chan func() (context.Context, interface{}, chan<- error) {
+func (d *SimpleComponent) getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error) {
 	return d.mmux
 }
 
-func (d *SimpleComponent) SetInbox(inbox chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error) {
-	if inbox == nil {
-		return nil, fmt.Errorf("%v SetInbox was passed an empty messaging channel", d.GetName())
+func (d *SimpleComponent) SetMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error) {
+	if d.messageHandlers == nil {
+		d.messageHandlers = map[string]func(context.Context, interface{}) error{}
 	}
+	d.messageHandlers[msgClass] = msgClassHandler
+}
 
-	d.inbox = inbox
-
-	// close any existing message stop channel before creating one
-	if d.isMessagingStopped != nil {
-		close(d.isMessagingStopped)
+func (d *SimpleComponent) getMessageHandler(msgClass string) func(context.Context, interface{}) error {
+	if d.messageHandlers == nil {
+		return nil
 	}
-	d.isMessagingStopped = make(chan struct{})
-	return d.isMessagingStopped, nil
+	return d.messageHandlers[msgClass]
+}
+
+func (d *SimpleComponent) DefaultMessageHandler(context.Context, interface{}) error {
+	return nil
 }
 
 func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, chan<- error) {
@@ -412,26 +425,34 @@ func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
 	return d.RWMutex
 }
 
-func (d *SimpleComponent) Notify(notification func() (context.Context, interface{}, chan<- error)) {
+func (d *SimpleComponent) Notify(ctx context.Context, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
 	d.GetRWLock().RLock()
 	defer d.GetRWLock().RUnlock()
 
 	mMux := d.getMmux()
 	if mMux == nil {
-		err := fmt.Errorf("message mux not initialized for %v", d.GetName())
-		log.Println("failed to process notification due to", err.Error())
-		_, _, errCh := notification()
-
-		defer func() {
-			if errCh != nil {
-				errCh <- err
-				close(errCh)
-			}
-		}()
-		return
+		return fmt.Errorf("message mux not initialized for %v", d.GetName())
 	}
 
-	mMux <- notification
+	errCh := make(chan error)
+	defer close(errCh)
+
+	mMux <- func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error) {
+		return ctx, msgClassId, msgClassLookup, message, errCh
+	}
+
+	select {
+	case <-time.After(1 * time.Second):
+		return errors.New("notification max timeout")
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
