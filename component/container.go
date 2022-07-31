@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -57,17 +58,10 @@ func (c *Container) Start(ctx context.Context) error {
 
 			log.Println(c.GetName(), "received", osSignal)
 
-			shutdownErrCh := make(chan error, 1)
-			notification := func() (context.Context, interface{}, chan<- error) {
-				// TODO: later change it to a context with timeout
-				log.Println("proceed to shutdown", c.GetName())
-				return context.TODO(), Shutdown, shutdownErrCh
-			}
-
-			c.Notify(notification)
-
-			shutdownErr, isErrChOpen := <-shutdownErrCh
-			if shutdownErr == nil && !isErrChOpen {
+			// TODO: later change it to a context with timeout
+			log.Println("proceed to shutdown", c.GetName())
+			err := c.Notify(context.TODO(), ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+			if err == nil {
 				log.Println("Shutdown notification was successfully sent to", c.GetName())
 				return nil
 			}
@@ -109,7 +103,9 @@ func (c *Container) Add(comp Component) error {
 					log.Println("failed to add component due to", err.Error())
 				}
 				c.cComponents[nextComp.GetName()] = cComm
+				c.GetRWLock().Lock()
 				c.components = append(c.components, nextComp.GetName())
+				c.GetRWLock().Unlock()
 			}
 		}()
 	}
@@ -120,6 +116,13 @@ func (c *Container) Add(comp Component) error {
 
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
+	pc, _, _, ok := runtime.Caller(1)
+	details := runtime.FuncForPC(pc)
+	if ok && details != nil {
+		log.Printf("componentLifecycleFSM() called from %s by %s\n", details.Name(), comp.GetName())
+	}
+	comp.GetRWLock().Lock()
+
 	switch comp.GetStage() {
 	case Submitted:
 		comp.setStage(Preinitializing)
@@ -128,6 +131,12 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		comp.preInit()
 		_ = comp.Callback(true, stateChangeCallbacker(comp))
 		ctx := context.Background()
+
+		// add default message handler if not added
+		if comp.getMessageHandler(comp.GetName()) == nil {
+			comp.SetMessageHandler(comp.GetName(), comp.DefaultMessageHandler)
+		}
+
 		go c.startMmux(ctx, comp)
 		comp.setStage(Preinitialized)
 		fallthrough
@@ -168,6 +177,10 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		comp.setStage(Teareddown)
 		c.removeComponent(comp.GetName())
 	}
+
+	comp.GetRWLock().Unlock()
+	log.Printf("return componentLifecycleFSM() called from %s by %s\n", details.Name(), comp.GetName())
+
 	return nil
 }
 
@@ -178,56 +191,57 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		if comp.GetState() != Active {
 			return
 		}
-		c.startMmux(ctx, comp)
+		go c.startMmux(ctx, comp)
 	}(ctx, comp)
 
 	for msgFunc := range comp.getMmux() {
-		msgCtx, msg, errCh := msgFunc()
+		msgCtx, msgClassId, msgClassLookup, msg, errCh := msgFunc()
+		msgClass := msgClassLookup[msgClassId]
 
-		switch msgType := msg.(type) {
-		case controlMsg:
-			switch msgType {
+		switch msgClassId {
+		case ControlMsgId:
+			switch msgClass {
+			//additional control handling cases goes here
 			case Shutdown:
 				comp.setStage(Stopping)
 				err := c.componentLifecycleFSM(msgCtx, comp)
-				if err != nil {
-					errCh <- err
-				}
-				close(errCh)
+				log.Println("degug,,,", comp.GetName(), "sending error", err)
+				errCh <- err
 				if err == nil {
 					return
 				}
 			}
-		case Component:
-			// check if message is a copy of the same underlying concrete component type
-			compConcreteType, msgCompConcreteType := reflect.TypeOf(comp).Elem(), reflect.TypeOf(msg).Elem()
-			if compConcreteType == msgCompConcreteType {
-				// validate if etag of the copy is current or not
-				if comp.GetEtag() != msgType.GetEtag() {
-					errCh <- errors.New("component copy is not current due to mismatched etag")
-					close(errCh)
-					break
+		case ComponentMsgId:
+			switch msgClass {
+			case comp.GetName():
+				// check if message is a copy of the same underlying concrete component type
+				msgCompType, compConcreteType, msgCompConcreteType := msg.(Component), reflect.TypeOf(comp).Elem(), reflect.TypeOf(msg).Elem()
+				if compConcreteType == msgCompConcreteType {
+					// validate if etag of the copy is current or not
+					if comp.GetEtag() != msgCompType.GetEtag() {
+						errCh <- errors.New("component copy is not current due to mismatched etag")
+						break
+					}
 				}
+				goto forwardMessage
+			default:
+				goto forwardMessage
 			}
-			goto sendToInbox
-		default:
-			goto sendToInbox
-		}
 
-	sendToInbox:
-		inbox := comp.getInbox()
-		if inbox == nil {
-			close(errCh)
-			continue
+		forwardMessage:
+			handler := comp.getMessageHandler(msgClass.(string))
+			errCh <- handler(msgCtx, msg)
 		}
-		inbox <- msgFunc
-
 	}
 }
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(comp Component) {
-		c.componentLifecycleFSM(ctx, comp)
+		if comp.GetState() != Active {
+			return
+		}
+		comp.setStage(Restarting)
+		go c.startComponent(ctx, comp)
 	}(comp)
 
 	err := comp.Start(ctx)
@@ -241,7 +255,6 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		if delay <= time.Duration(0) {
 			delay = 5 * time.Second
 		}
-		comp.setStage(Restarting)
 		log.Println(comp, "to restart after", delay)
 		time.Sleep(delay)
 		return
@@ -286,6 +299,9 @@ returnnoerror:
 // Note that the method sends Shutdown notification to the encompassed components and relies on removeComponent method to properly update the data structures.
 // Both methods maintain clear separation of responsibilities.
 func (c *Container) Stop(ctx context.Context) error {
+	// c.GetRWLock().Lock()
+	// defer c.GetRWLock().Unlock()
+
 	// proceed to stop components in LIFO order
 	last := len(c.components) - 1
 
@@ -297,11 +313,8 @@ func (c *Container) Stop(ctx context.Context) error {
 			log.Println(cName, "component no longer found within container", c.GetName())
 		} else if !c.Matches(cComp.comp) {
 			log.Println("sending", Shutdown, "signal to", cName)
-			errCh := make(chan error)
-			cComp.comp.Notify(func() (context.Context, interface{}, chan<- error) {
-				return context.TODO(), Shutdown, errCh
-			})
-			err := <-errCh
+
+			err := cComp.comp.Notify(context.TODO(), ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 			if err != nil {
 				return err
 			}
@@ -439,6 +452,7 @@ func stateChangeCallbacker(comp Component) func(context.Context, int, interface{
 			log.Println("proceeding to set new ETag for", comp.GetName())
 			SetComponentEtag(comp)
 		case Stopping:
+			log.Println("stateChangeCallbacker: case Stopping")
 			err := comp.RemoveCallback(cbIndx)
 			if err != nil {
 				log.Println(err)

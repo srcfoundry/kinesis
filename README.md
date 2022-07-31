@@ -32,3 +32,9 @@ In addition to modelling container <-> component heirachies emphasis is also pro
     - [X] component name permissable character check.
     - [X] check for adding route to exported http handler func.
     - [X] check sequential order of component activation.
+
+Have to check why notification times out
+
+2022/07/30 20:33:52 Notify() called from github.com/srcfoundry/kinesis/component.(*Container).Stop had maxed timeout within httpserver
+2022/07/30 20:33:52 degug,,, kinesis sending error notification max timeout
+2022/07/30 20:33:52 Notify() called from github.com/srcfoundry/kinesis/component.(*Container).Start had maxed timeout within kinesis

@@ -3,6 +3,8 @@ package component
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
 	"os"
 	"reflect"
 	"strings"
@@ -18,9 +20,9 @@ func shutdownTestContainer(c *Container, delay time.Duration) {
 
 	go func() {
 		time.Sleep(delay)
-		c.Notify(func() (context.Context, interface{}, chan<- error) {
-			return nil, Shutdown, errCh
-		})
+		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		log.Println("shutdownTestContainer....")
+		c.Notify(ctx, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 	}()
 
 outer:
@@ -30,7 +32,8 @@ outer:
 			if notification == Stopped {
 				break outer
 			}
-		case <-errCh:
+		case err := <-errCh:
+			fmt.Println("obtained error", err)
 		}
 	}
 }
@@ -66,7 +69,7 @@ func TestContainer_Add(t *testing.T) {
 			}
 		})
 	}
-	shutdownTestContainer(c, 5*time.Second)
+	shutdownTestContainer(c, 10*time.Second)
 }
 
 func TestContainer_HandleInterrupt(t *testing.T) {
@@ -221,9 +224,7 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	newCompCopy, _ := c.GetComponent(testComponentName)
 	errCh := make(chan error, 1)
 
-	testComp.Notify(func() (context.Context, interface{}, chan<- error) {
-		return nil, newCompCopy, errCh
-	})
+	testComp.Notify(context.TODO(), ComponentMsgId, map[MsgClassifierId]interface{}{ComponentMsgId: testComp.GetName()}, newCompCopy)
 
 	type args struct {
 		name string
