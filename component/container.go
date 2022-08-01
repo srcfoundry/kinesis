@@ -178,7 +178,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		if comp.GetState() != Active {
 			return
 		}
-		c.startMmux(ctx, comp)
+		go c.startMmux(ctx, comp)
 	}(ctx, comp)
 
 	for msgFunc := range comp.getMmux() {
@@ -227,7 +227,11 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(comp Component) {
-		c.componentLifecycleFSM(ctx, comp)
+		if comp.GetState() != Active {
+			return
+		}
+		comp.setStage(Restarting)
+		go c.startComponent(ctx, comp)
 	}(comp)
 
 	err := comp.Start(ctx)
@@ -241,7 +245,6 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		if delay <= time.Duration(0) {
 			delay = 5 * time.Second
 		}
-		comp.setStage(Restarting)
 		log.Println(comp, "to restart after", delay)
 		time.Sleep(delay)
 		return

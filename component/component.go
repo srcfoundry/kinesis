@@ -263,7 +263,7 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 	}
 
 	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
-	log.Println(fmt.Sprintf("successfully removed callback function at index %v within %v", cbIndx, d.GetName()))
+	log.Printf("successfully removed callback function at index %v within %v", cbIndx, d.GetName())
 	return nil
 }
 
