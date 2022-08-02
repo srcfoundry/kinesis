@@ -123,6 +123,9 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	}
 	comp.GetRWLock().Lock()
 
+	log.Printf("componentLifecycleFSM() called from %s by %s in stage: %s \n", details.Name(), comp.GetName(), comp.GetStage())
+	log.Printf("componentLifecycleFSM() called from %s by %s in state: %s \n", details.Name(), comp.GetName(), comp.GetState())
+
 	switch comp.GetStage() {
 	case Submitted:
 		comp.setStage(Preinitializing)
@@ -229,20 +232,24 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			}
 
 		forwardMessage:
+			log.Println("startMmux forwardMessage tag before getting handler for", comp.GetName())
 			handler := comp.getMessageHandler(msgClass.(string))
-			errCh <- handler(msgCtx, msg)
+			log.Println("startMmux forwardMessage tag before calling handler for", comp.GetName())
+			err := handler(msgCtx, msg)
+			log.Println("startMmux forwardMessage tag for", comp.GetName(), "sending back error", err)
+			errCh <- err
 		}
 	}
 }
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
-	defer func(comp Component) {
+	defer func(ctx context.Context, comp Component) {
 		if comp.GetState() != Active {
 			return
 		}
 		comp.setStage(Restarting)
-		go c.startComponent(ctx, comp)
-	}(comp)
+		go c.componentLifecycleFSM(ctx, comp)
+	}(ctx, comp)
 
 	err := comp.Start(ctx)
 	if err != nil {
