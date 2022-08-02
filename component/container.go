@@ -226,13 +226,9 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 }
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
-	defer func(comp Component) {
-		if comp.GetState() != Active {
-			return
-		}
-		comp.setStage(Restarting)
-		go c.startComponent(ctx, comp)
-	}(comp)
+	defer func(ctx context.Context, comp Component) {
+		go c.componentLifecycleFSM(ctx, comp)
+	}(ctx, comp)
 
 	err := comp.Start(ctx)
 	if err != nil {
@@ -245,6 +241,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		if delay <= time.Duration(0) {
 			delay = 5 * time.Second
 		}
+		comp.setStage(Restarting)
 		log.Println(comp, "to restart after", delay)
 		time.Sleep(delay)
 		return
