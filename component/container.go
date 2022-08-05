@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"reflect"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -58,9 +57,8 @@ func (c *Container) Start(ctx context.Context) error {
 
 			log.Println(c.GetName(), "received", osSignal)
 
-			// TODO: later change it to a context with timeout
 			log.Println("proceed to shutdown", c.GetName())
-			err := c.Notify(context.TODO(), ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+			err := c.Notify(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 			if err == nil {
 				log.Println("Shutdown notification was successfully sent to", c.GetName())
 				return nil
@@ -116,15 +114,7 @@ func (c *Container) Add(comp Component) error {
 
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
-	pc, _, _, ok := runtime.Caller(1)
-	details := runtime.FuncForPC(pc)
-	if ok && details != nil {
-		log.Printf("componentLifecycleFSM() called from %s by %s\n", details.Name(), comp.GetName())
-	}
 	comp.GetRWLock().Lock()
-
-	log.Printf("componentLifecycleFSM() called from %s by %s in stage: %s \n", details.Name(), comp.GetName(), comp.GetStage())
-	log.Printf("componentLifecycleFSM() called from %s by %s in state: %s \n", details.Name(), comp.GetName(), comp.GetState())
 
 	switch comp.GetStage() {
 	case Submitted:
@@ -182,8 +172,6 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	}
 
 	comp.GetRWLock().Unlock()
-	log.Printf("return componentLifecycleFSM() called from %s by %s\n", details.Name(), comp.GetName())
-
 	return nil
 }
 
@@ -208,7 +196,6 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			case Shutdown:
 				comp.setStage(Stopping)
 				err := c.componentLifecycleFSM(msgCtx, comp)
-				log.Println("degug,,,", comp.GetName(), "sending error", err)
 				errCh <- err
 				if err == nil {
 					return
@@ -232,11 +219,8 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			}
 
 		forwardMessage:
-			log.Println("startMmux forwardMessage tag before getting handler for", comp.GetName())
 			handler := comp.getMessageHandler(msgClass.(string))
-			log.Println("startMmux forwardMessage tag before calling handler for", comp.GetName())
 			err := handler(msgCtx, msg)
-			log.Println("startMmux forwardMessage tag for", comp.GetName(), "sending back error", err)
 			errCh <- err
 		}
 	}
@@ -244,16 +228,9 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
-		if comp.GetState() != Active {
+		if comp.GetStage() >= Stopping {
 			return
 		}
-		comp.setStage(Restarting)
-		go c.componentLifecycleFSM(ctx, comp)
-	}(ctx, comp)
-
-	err := comp.Start(ctx)
-	if err != nil {
-		log.Println(comp, "encountered following error while starting.", err)
 		isRestartable, delay := comp.IsRestartableWithDelay()
 		if !isRestartable {
 			log.Println(comp, "configured not to restart")
@@ -262,8 +239,15 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		if delay <= time.Duration(0) {
 			delay = 5 * time.Second
 		}
+		comp.setStage(Restarting)
 		log.Println(comp, "to restart after", delay)
 		time.Sleep(delay)
+		go c.componentLifecycleFSM(ctx, comp)
+	}(ctx, comp)
+
+	err := comp.Start(ctx)
+	if err != nil {
+		log.Println(comp, "encountered following error while starting.", err)
 		return
 	}
 }
@@ -306,9 +290,6 @@ returnnoerror:
 // Note that the method sends Shutdown notification to the encompassed components and relies on removeComponent method to properly update the data structures.
 // Both methods maintain clear separation of responsibilities.
 func (c *Container) Stop(ctx context.Context) error {
-	// c.GetRWLock().Lock()
-	// defer c.GetRWLock().Unlock()
-
 	// proceed to stop components in LIFO order
 	last := len(c.components) - 1
 
@@ -321,7 +302,7 @@ func (c *Container) Stop(ctx context.Context) error {
 		} else if !c.Matches(cComp.comp) {
 			log.Println("sending", Shutdown, "signal to", cName)
 
-			err := cComp.comp.Notify(context.TODO(), ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+			err := cComp.comp.Notify(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 			if err != nil {
 				return err
 			}
@@ -407,9 +388,6 @@ func (c *Container) removeHttpHandlers(comp Component) {
 
 // removeComponent removes a component from a container in the event its being shutdown
 func (c *Container) removeComponent(name string) {
-	c.GetRWLock().Lock()
-	defer c.GetRWLock().Unlock()
-
 	delete(c.cComponents, name)
 
 	indx, found := len(c.components)-1, false

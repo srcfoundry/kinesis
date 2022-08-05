@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"runtime"
 	"sync"
 	"time"
 
@@ -91,7 +90,7 @@ type Component interface {
 	//
 	// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with msgClassLookup in determining the
 	// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
-	Notify(ctx context.Context, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error
+	Notify(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error
 
 	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
 	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
@@ -257,9 +256,6 @@ func (d *SimpleComponent) GetEtag() string {
 }
 
 func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error {
-	// d.GetRWLock().Lock()
-	// defer d.GetRWLock().Unlock()
-
 	if d.Stage > Started {
 		return fmt.Errorf("unable to add callback since %v is %v", d.GetName(), d.Stage)
 	}
@@ -273,29 +269,16 @@ func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Contex
 }
 
 func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
-	log.Println("RemoveCallback before lock")
-
-	// d.GetRWLock().RLock()
-	// defer func() {
-	// 	d.GetRWLock().RUnlock()
-	// 	log.Println("RemoveCallback after Unlock")
-	// }()
-
-	log.Println("RemoveCallback after lock")
-
 	if cbIndx >= len(d.callbacks) {
 		return fmt.Errorf("unable to find callback function at index %v within %v", cbIndx, d.GetName())
 	}
 
 	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
-	log.Println(fmt.Sprintf("successfully removed callback function at index %v within %v", cbIndx, d.GetName()))
+	log.Printf("successfully removed callback function at index %v within %v\n", cbIndx, d.GetName())
 	return nil
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
-	// d.GetRWLock().Lock()
-	// defer d.GetRWLock().Unlock()
-
 	if d.Stage > Started {
 		return fmt.Errorf("unable to subscribe since %v is %v", d.GetName(), d.Stage)
 	}
@@ -314,9 +297,6 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 }
 
 func (d *SimpleComponent) Unsubscribe(subscriber string) error {
-	// d.GetRWLock().Lock()
-	// defer d.GetRWLock().Unlock()
-
 	if d.subscribers == nil {
 		return fmt.Errorf("unable to find %v subscribed to %v", subscriber, d.GetName())
 	}
@@ -336,21 +316,16 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 	}
 
 	// make a copy of callback functions and iterate over the copied function slice, in case the callback function removes itself from the callback function slice
-	//d.GetRWLock().RLock()
 	callbackFuncs := make([]func(context.Context, int, interface{}), len(d.callbacks))
 	copy(callbackFuncs, d.callbacks)
-	//d.GetRWLock().RUnlock()
 
 	for cbIndx, callbackFunc := range callbackFuncs {
 		// each callback is executed with a max timeout of 2 seconds
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 
 		go func() {
-			log.Println("calling callbackFunc for notification", notification)
 			callbackFunc(ctx, cbIndx, notification)
-			log.Println("return from callbackFunc for notification", notification)
 			cancel()
-			log.Println("cancel() after callbackFunc for notification", notification)
 		}()
 
 		// once context is cancelled, check ctx.Err() to see if context got cancelled due to executing cancel() after the callback or due to context timeout.
@@ -366,19 +341,9 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 }
 
 func (d *SimpleComponent) notifySubscribers(notification interface{}) {
-	pc, _, _, ok := runtime.Caller(1)
-	details := runtime.FuncForPC(pc)
-	if ok && details != nil {
-		log.Printf("%s notifySubscribers() called from %s for %s\n", d.GetName(), details.Name(), notification)
-	}
-	// d.GetRWLock().RLock()
-	// defer d.GetRWLock().RUnlock()
-
 	for _, subsCh := range d.subscribers {
 		subsCh <- notification
 	}
-
-	log.Printf("%s notifySubscribers() return after call from %s for %s\n", d.GetName(), details.Name(), notification)
 }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
@@ -405,7 +370,7 @@ func (d *SimpleComponent) Start(context.Context) error {
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
 // Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
-	return true, 3 * time.Second
+	return false, 0 * time.Second
 }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
@@ -462,24 +427,10 @@ func (d *SimpleComponent) DefaultMessageHandler(context.Context, interface{}) er
 }
 
 func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
-	pc, _, _, ok := runtime.Caller(1)
-	details := runtime.FuncForPC(pc)
-	if ok && details != nil {
-		log.Printf("GetRWLock() called from %s\n", details.Name())
-	}
 	return d.RWMutex
 }
 
-func (d *SimpleComponent) Notify(ctx context.Context, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
-	pc, _, _, ok := runtime.Caller(1)
-	details := runtime.FuncForPC(pc)
-	if ok && details != nil {
-		log.Printf("Notify() called from %s within %s\n", details.Name(), d.GetName())
-	}
-
-	// d.GetRWLock().RLock()
-	// defer d.GetRWLock().RUnlock()
-
+func (d *SimpleComponent) Notify(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
 	mMux := d.getMmux()
 	if mMux == nil {
 		return fmt.Errorf("message mux not initialized for %v", d.GetName())
@@ -488,16 +439,17 @@ func (d *SimpleComponent) Notify(ctx context.Context, msgClassId MsgClassifierId
 	errCh := make(chan error)
 	defer close(errCh)
 
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	mMux <- func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error) {
 		return ctx, msgClassId, msgClassLookup, message, errCh
 	}
 
 	select {
 	case <-time.After(15 * time.Second):
-		log.Printf("Notify() called from %s had maxed timeout within %s\n", details.Name(), d.GetName())
 		return errors.New("notification max timeout")
 	case <-ctx.Done():
-		log.Println(d.GetName(), "<-ctx.Done()...")
 		return ctx.Err()
 	case err := <-errCh:
 		if err != nil {

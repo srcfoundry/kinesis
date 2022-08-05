@@ -20,9 +20,8 @@ func shutdownTestContainer(c *Container, delay time.Duration) {
 
 	go func() {
 		time.Sleep(delay)
-		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
 		log.Println("shutdownTestContainer....")
-		c.Notify(ctx, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+		c.Notify(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 	}()
 
 outer:
@@ -69,7 +68,7 @@ func TestContainer_Add(t *testing.T) {
 			}
 		})
 	}
-	shutdownTestContainer(c, 10*time.Second)
+	shutdownTestContainer(c, 5*time.Second)
 }
 
 func TestContainer_HandleInterrupt(t *testing.T) {
@@ -222,36 +221,22 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	newCompCopy, _ := c.GetComponent(testComponentName)
-	errCh := make(chan error, 1)
-
-	testComp.Notify(context.TODO(), ComponentMsgId, map[MsgClassifierId]interface{}{ComponentMsgId: testComp.GetName()}, newCompCopy)
-
-	type args struct {
-		name string
-	}
 
 	tests := []struct {
-		name            string
-		wantErr         bool
-		wantIsErrChOpen bool
+		name    string
+		wantErr bool
 	}{
 		{
-			name:            "NotifyValidComponentCopy",
-			wantErr:         false,
-			wantIsErrChOpen: false,
+			name:    "NotifyValidComponentCopy",
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err, isOpen := <-errCh
+			err := testComp.Notify(5*time.Second, ComponentMsgId, map[MsgClassifierId]interface{}{ComponentMsgId: testComp.GetName()}, newCompCopy)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NotifyValidComponentCopy  error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if isOpen != tt.wantIsErrChOpen {
-				t.Errorf("NotifyValidComponentCopy  isOpen = %v, wantIsErrChOpen %v", isOpen, tt.wantIsErrChOpen)
 				return
 			}
 		})
@@ -471,6 +456,7 @@ func Test_validateName(t *testing.T) {
 type TestRestartableSimpleType struct {
 	SimpleComponent
 	toggleStart bool
+	ch          chan struct{}
 }
 
 func (d *TestRestartableSimpleType) Start(context.Context) error {
@@ -478,7 +464,21 @@ func (d *TestRestartableSimpleType) Start(context.Context) error {
 		d.toggleStart = true
 		return errors.New("simulating error to start TestRestartableSimpleType")
 	}
+
+	d.ch = make(chan struct{})
+	<-d.ch
+	log.Println("returning from TestRestartableSimpleType Start()")
 	return nil
+}
+
+func (d *TestRestartableSimpleType) Stop(context.Context) error {
+	close(d.ch)
+	log.Println("closed TestRestartableSimpleType ch")
+	return nil
+}
+
+func (d *TestRestartableSimpleType) IsRestartableWithDelay() (bool, time.Duration) {
+	return true, 1 * time.Second
 }
 
 func TestContainer_AddRestartableComponent(t *testing.T) {
@@ -510,11 +510,10 @@ func TestContainer_AddRestartableComponent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			time.Sleep(10 * time.Second)
 			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
 				t.Errorf("Container.Add() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
-	shutdownTestContainer(c, 15*time.Second)
+	shutdownTestContainer(c, 5*time.Second)
 }
