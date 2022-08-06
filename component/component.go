@@ -3,6 +3,7 @@ package component
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/mohae/deepcopy"
+)
+
+// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with a lookup map in determining the
+// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
+type MsgClassifierId string
+
+const (
+	ControlMsgId   MsgClassifierId = "ControlMsgId"   // ControlMsgId to classify controlMsg
+	ComponentMsgId MsgClassifierId = "ComponentMsgId" // ComponentMsgId to classify any Component type being passed
 )
 
 type (
@@ -76,10 +86,11 @@ type Component interface {
 	Start(context.Context) error
 	Stop(context.Context) error
 
-	// Notify could be used as a primary means to asynchronously send any type of message to a component, wrapped as a function. Once the message is processed
-	// by the receiving component, proceed to close the error channel within the receiving component, to indicate to the sender that it had finished processing
-	// the message. In event of any error, the receiving component could pass along the error on the error channel before closing the channel.
-	Notify(func() (context.Context, interface{}, chan<- error))
+	// Notify could be used to synchronously send any type of message to a component.
+	//
+	// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with msgClassLookup in determining the
+	// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
+	Notify(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error
 
 	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
 	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
@@ -105,7 +116,14 @@ type Component interface {
 	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
 	getInbox() chan func() (context.Context, interface{}, chan<- error)
 
-	getMmux() chan func() (context.Context, interface{}, chan<- error)
+	// To set message handler functions for any message class types. Components could define its own message classifications.
+	SetMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error)
+	getMessageHandler(msgClass string) func(context.Context, interface{}) error
+
+	// DefaultMessageHandler which handles all messages except ControlMsgId types.
+	DefaultMessageHandler(context.Context, interface{}) error
+
+	getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
 
 	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic for exponential backoff
 	// to return the delay duration between restarts.
@@ -137,7 +155,8 @@ type SimpleComponent struct {
 	State     state `json:"state"`
 
 	// message mux
-	mmux chan func() (context.Context, interface{}, chan<- error)
+	mmux            chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
+	messageHandlers map[string]func(context.Context, interface{}) error
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
@@ -160,7 +179,7 @@ func (d *SimpleComponent) GetURI() string {
 }
 
 func (d *SimpleComponent) preInit() {
-	d.mmux = make(chan func() (context.Context, interface{}, chan<- error), 1)
+	d.mmux = make(chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error), 1)
 }
 
 func (d *SimpleComponent) tearDown() {
@@ -239,9 +258,6 @@ func (d *SimpleComponent) GetEtag() string {
 }
 
 func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error {
-	d.GetRWLock().Lock()
-	defer d.GetRWLock().Unlock()
-
 	if d.Stage > Started {
 		return fmt.Errorf("unable to add callback since %v is %v", d.GetName(), d.Stage)
 	}
@@ -255,22 +271,16 @@ func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Contex
 }
 
 func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
-	d.GetRWLock().Lock()
-	defer d.GetRWLock().Unlock()
-
 	if cbIndx >= len(d.callbacks) {
 		return fmt.Errorf("unable to find callback function at index %v within %v", cbIndx, d.GetName())
 	}
 
 	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
-	log.Printf("successfully removed callback function at index %v within %v", cbIndx, d.GetName())
+	log.Printf("successfully removed callback function at index %v within %v\n", cbIndx, d.GetName())
 	return nil
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
-	d.GetRWLock().Lock()
-	defer d.GetRWLock().Unlock()
-
 	if d.Stage > Started {
 		return fmt.Errorf("unable to subscribe since %v is %v", d.GetName(), d.Stage)
 	}
@@ -289,9 +299,6 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 }
 
 func (d *SimpleComponent) Unsubscribe(subscriber string) error {
-	d.GetRWLock().Lock()
-	defer d.GetRWLock().Unlock()
-
 	if d.subscribers == nil {
 		return fmt.Errorf("unable to find %v subscribed to %v", subscriber, d.GetName())
 	}
@@ -311,14 +318,12 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 	}
 
 	// make a copy of callback functions and iterate over the copied function slice, in case the callback function removes itself from the callback function slice
-	d.GetRWLock().RLock()
 	callbackFuncs := make([]func(context.Context, int, interface{}), len(d.callbacks))
 	copy(callbackFuncs, d.callbacks)
-	d.GetRWLock().RUnlock()
 
 	for cbIndx, callbackFunc := range callbackFuncs {
 		// each callback is executed with a max timeout of 2 seconds
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 
 		go func() {
 			callbackFunc(ctx, cbIndx, notification)
@@ -330,7 +335,7 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 		<-ctx.Done()
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
-			log.Println(d.GetName(), "callback at index", cbIndx, "exceeded deadline")
+			log.Println(d.GetName(), "callback at index", cbIndx, "exceeded deadline for notification", notification)
 		case context.Canceled:
 			//log.Println(d.GetName(), "callback at index", cbIndx, "executed successfully")
 		}
@@ -338,9 +343,6 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 }
 
 func (d *SimpleComponent) notifySubscribers(notification interface{}) {
-	d.GetRWLock().RLock()
-	defer d.GetRWLock().RUnlock()
-
 	for _, subsCh := range d.subscribers {
 		subsCh <- notification
 	}
@@ -370,7 +372,7 @@ func (d *SimpleComponent) Start(context.Context) error {
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
 // Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
-	return true, 3 * time.Second
+	return false, 0 * time.Second
 }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
@@ -385,7 +387,7 @@ func (d *SimpleComponent) GetContainer() *Container {
 	return d.container
 }
 
-func (d *SimpleComponent) getMmux() chan func() (context.Context, interface{}, chan<- error) {
+func (d *SimpleComponent) getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error) {
 	return d.mmux
 }
 
@@ -408,30 +410,56 @@ func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, 
 	return d.inbox
 }
 
+func (d *SimpleComponent) SetMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error) {
+	if d.messageHandlers == nil {
+		d.messageHandlers = map[string]func(context.Context, interface{}) error{}
+	}
+	d.messageHandlers[msgClass] = msgClassHandler
+}
+
+func (d *SimpleComponent) getMessageHandler(msgClass string) func(context.Context, interface{}) error {
+	if d.messageHandlers == nil {
+		return nil
+	}
+	return d.messageHandlers[msgClass]
+}
+
+func (d *SimpleComponent) DefaultMessageHandler(context.Context, interface{}) error {
+	return nil
+}
+
 func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
 	return d.RWMutex
 }
 
-func (d *SimpleComponent) Notify(notification func() (context.Context, interface{}, chan<- error)) {
-	d.GetRWLock().RLock()
-	defer d.GetRWLock().RUnlock()
-
+func (d *SimpleComponent) Notify(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
 	mMux := d.getMmux()
 	if mMux == nil {
-		err := fmt.Errorf("message mux not initialized for %v", d.GetName())
-		log.Println("failed to process notification due to", err.Error())
-		_, _, errCh := notification()
-
-		defer func() {
-			if errCh != nil {
-				errCh <- err
-				close(errCh)
-			}
-		}()
-		return
+		return fmt.Errorf("message mux not initialized for %v", d.GetName())
 	}
 
-	mMux <- notification
+	errCh := make(chan error)
+	defer close(errCh)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	mMux <- func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error) {
+		return ctx, msgClassId, msgClassLookup, message, errCh
+	}
+
+	select {
+	case <-time.After(15 * time.Second):
+		return errors.New("notification max timeout")
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-errCh:
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {

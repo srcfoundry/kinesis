@@ -21,7 +21,7 @@ In addition to modelling container <-> component heirachies emphasis is also pro
 ### TODO
 - [X] add dynamic http routes addition/deletion
 - [X] design on demo app to showcase functionalities
-- [] add persistence capability for stateful app
+- [X] refactor notifications with timeout
 - [X] implement container Stop to stop components maintained within it
 - [X] root container to block until interrupt signal from OS
 - [X] check mechanism for returning copy of initialized component from container.
