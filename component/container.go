@@ -217,12 +217,12 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			default:
 				goto forwardMessage
 			}
-
-		forwardMessage:
-			handler := comp.getMessageHandler(msgClass.(string))
-			err := handler(msgCtx, msg)
-			errCh <- err
 		}
+
+	forwardMessage:
+		handler := comp.getMessageHandler(msgClass.(string))
+		err := handler(msgCtx, msg)
+		errCh <- err
 	}
 }
 

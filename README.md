@@ -21,7 +21,7 @@ In addition to modelling container <-> component heirachies emphasis is also pro
 ### TODO
 - [X] add dynamic http routes addition/deletion
 - [X] design on demo app to showcase functionalities
-- [] add persistence capability for stateful app
+- [X] refactor notifications with timeout
 - [X] implement container Stop to stop components maintained within it
 - [X] root container to block until interrupt signal from OS
 - [X] check mechanism for returning copy of initialized component from container.
@@ -32,9 +32,3 @@ In addition to modelling container <-> component heirachies emphasis is also pro
     - [X] component name permissable character check.
     - [X] check for adding route to exported http handler func.
     - [X] check sequential order of component activation.
-
-Have to check why notification times out
-
-2022/07/30 20:33:52 Notify() called from github.com/srcfoundry/kinesis/component.(*Container).Stop had maxed timeout within httpserver
-2022/07/30 20:33:52 degug,,, kinesis sending error notification max timeout
-2022/07/30 20:33:52 Notify() called from github.com/srcfoundry/kinesis/component.(*Container).Start had maxed timeout within kinesis

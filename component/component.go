@@ -116,9 +116,11 @@ type Component interface {
 	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
 	getInbox() chan func() (context.Context, interface{}, chan<- error)
 
-	// Set message handler functions for any message class types. Components could define its own message classifications.
+	// To set message handler functions for any message class types. Components could define its own message classifications.
 	SetMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error)
 	getMessageHandler(msgClass string) func(context.Context, interface{}) error
+
+	// DefaultMessageHandler which handles all messages except ControlMsgId types.
 	DefaultMessageHandler(context.Context, interface{}) error
 
 	getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
