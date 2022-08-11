@@ -179,6 +179,10 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 // preinitialized successfully, would each have its own message handlers started as separate go routines.
 func (c *Container) startMmux(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
+		// making sure panics are caught while processing messages
+		if r := recover(); r != nil {
+			log.Println(comp, "mmux recovering from panic:", r)
+		}
 		if comp.GetState() != Active {
 			return
 		}
@@ -228,6 +232,11 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
+		// making sure panics are caught while starting a component
+		if r := recover(); r != nil {
+			log.Println(comp, "recovering from panic:", r)
+		}
+
 		if comp.GetStage() >= Stopping {
 			return
 		}
