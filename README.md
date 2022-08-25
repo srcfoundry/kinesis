@@ -19,24 +19,19 @@ The framework consists of a peculiar design consideration to always push a Golan
 
 <br/>
 
+### Component design
+The ```SimpleComponent``` type implements all the methods within a Component interface. Additional component types could be composed by including SimpleComponent as an embedded type thereby acquiring all the methods of the embedded type, which could be overridden by the embedding component. Container types could be composed by embedding the ```Container``` type, which in turn embeds the SimpleComponent type.
+
+<br/>
+
+### Dynamic HTTP URI
+The framework dynamically creates HTTP URIs' for all exported methods within a component, which resemble an HTTP handler function ```func (w http.ResponseWriter, r *http.Request)```. At the time of initializing a component, HTTP URIs' are derived from the component type and added to a HTTP handler map, maintained within the parent container, for purpose of forwarding HTTP requests. Corresponding HTTP handler entries are removed in the event a component is being stopped and teared down. 
+
+<br/>
+
 ### Building and Running
 - ```go build cmd/kinesis.go```
 - ```./kinesis```
 - ```ctrl-c to quit```
 
 <br/>
-
-### TODO
-- [X] add dynamic http routes addition/deletion
-- [X] design on demo app to showcase functionalities
-- [X] refactor notifications with timeout
-- [X] implement container Stop to stop components maintained within it
-- [X] root container to block until interrupt signal from OS
-- [X] check mechanism for returning copy of initialized component from container.
-- [X] using component hash & etag to accept/reject component type messages to update.
-- [X] add more UT to cover all mechanisms developed till now.
-- [X] additional UT cases to add: 
-    - [X] simulate app os signal interrupt handling.
-    - [X] component name permissable character check.
-    - [X] check for adding route to exported http handler func.
-    - [X] check sequential order of component activation.
