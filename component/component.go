@@ -475,7 +475,7 @@ func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if container != nil {
 		comp, _ = container.GetComponent(d.GetName())
 	} else {
-		comp, _ = getComponentCopy(d)
+		comp, _ = createCopy(d)
 	}
 
 	MarshallToHttpResponseWriter(w, comp)
@@ -501,9 +501,9 @@ func SetComponentEtag(comp Component) error {
 	return nil
 }
 
-// getComponentCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
+// createCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
 // is called within a critical section or call hiearchy traces back to one.
-func getComponentCopy(comp Component) (Component, error) {
+func createCopy(comp Component) (Component, error) {
 	SetComponentEtag(comp)
 	cCopy := deepcopy.Copy(comp)
 	return cCopy.(Component), nil

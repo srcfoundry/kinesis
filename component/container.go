@@ -364,7 +364,7 @@ func (c *Container) GetComponent(name string) (Component, error) {
 		return nil, errors.New("unable to find component type within cComponent")
 	}
 
-	return getComponentCopy(comp)
+	return createCopy(comp)
 }
 
 // GetHttpHandler returns the longest matching URI prefix handler
