@@ -21,7 +21,7 @@ func shutdownTestContainer(c *Container, delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
 		log.Println("shutdownTestContainer....")
-		c.Notify(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+		c.SendSyncMessage(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 	}()
 
 outer:
@@ -234,7 +234,7 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := testComp.Notify(5*time.Second, ComponentMsgId, map[MsgClassifierId]interface{}{ComponentMsgId: testComp.GetName()}, newCompCopy)
+			err := testComp.SendSyncMessage(5*time.Second, ComponentMsgId, map[MsgClassifierId]interface{}{ComponentMsgId: testComp.GetName()}, newCompCopy)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NotifyValidComponentCopy  error = %v, wantErr %v", err, tt.wantErr)
 				return

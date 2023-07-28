@@ -58,7 +58,7 @@ func (c *Container) Start(ctx context.Context) error {
 			log.Println(c.GetName(), "received", osSignal)
 
 			log.Println("proceed to shutdown", c.GetName())
-			err := c.Notify(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+			err := c.SendSyncMessage(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 			if err == nil {
 				log.Println("Shutdown notification was successfully sent to", c.GetName())
 				return nil
@@ -311,7 +311,7 @@ func (c *Container) Stop(ctx context.Context) error {
 		} else if !c.Matches(cComp.comp) {
 			log.Println("sending", Shutdown, "signal to", cName)
 
-			err := cComp.comp.Notify(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+			err := cComp.comp.SendSyncMessage(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
 			if err != nil {
 				return err
 			}
@@ -457,6 +457,9 @@ func stateChangeCallbacker(comp Component) func(context.Context, int, interface{
 }
 
 func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r *http.Request) {
+	if comp.IsNonRestEntity() {
+		return nil
+	}
 	// proceeding to assign URI for the component. for that we would need to travserse all the way to top container.
 	rootC := comp.GetContainer()
 	paths := []string{}

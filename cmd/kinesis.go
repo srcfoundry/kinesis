@@ -23,6 +23,7 @@ func main() {
 	httpServer := new(common.HttpServer)
 	httpServer.Name = "httpserver"
 	httpServer.RWMutex = &sync.RWMutex{}
+	httpServer.SetAsNonRestEntity(true)
 	err = app.Add(httpServer)
 	if err != nil {
 		log.Printf("failed to start %s, due to %s", httpServer.GetName(), err)

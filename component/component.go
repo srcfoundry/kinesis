@@ -86,11 +86,11 @@ type Component interface {
 	Start(context.Context) error
 	Stop(context.Context) error
 
-	// Notify could be used to synchronously send any type of message to a component.
+	// SendSyncMessage could be used to synchronously send any type of message to a component.
 	//
 	// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with msgClassLookup in determining the
 	// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
-	Notify(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error
+	SendSyncMessage(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error
 
 	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
 	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
@@ -142,17 +142,21 @@ type Component interface {
 
 	fmt.Stringer
 	http.Handler
+
+	SetAsNonRestEntity(bool)
+	IsNonRestEntity() bool
 }
 
 type SimpleComponent struct {
 	Etag string `json:"etag" hash:"ignore"`
 	hash uint64
 
-	Name      string `json:"name"`
-	uri       string
-	container *Container
-	Stage     stage `json:"stage"`
-	State     state `json:"state"`
+	Name            string `json:"name"`
+	uri             string
+	isNonRestEntity bool
+	container       *Container
+	Stage           stage `json:"stage"`
+	State           state `json:"state"`
 
 	// message mux
 	mmux            chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
@@ -255,6 +259,14 @@ func (d *SimpleComponent) setEtag(etag string) {
 
 func (d *SimpleComponent) GetEtag() string {
 	return d.Etag
+}
+
+func (d *SimpleComponent) SetAsNonRestEntity(set bool) {
+	d.isNonRestEntity = set
+}
+
+func (d *SimpleComponent) IsNonRestEntity() bool {
+	return d.isNonRestEntity
 }
 
 func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error {
@@ -432,7 +444,7 @@ func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
 	return d.RWMutex
 }
 
-func (d *SimpleComponent) Notify(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
+func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
 	mMux := d.getMmux()
 	if mMux == nil {
 		return fmt.Errorf("message mux not initialized for %v", d.GetName())
