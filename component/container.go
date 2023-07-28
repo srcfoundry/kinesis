@@ -494,7 +494,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 				// set the component URI
 				comp.setURI(cURI)
 			} else {
-				handlerURI := cURI + "/" + methodName
+				handlerURI := cURI + "/" + strings.ToLower(methodName)
 				handlers[handlerURI] = httpHandlerFunc
 			}
 		}
