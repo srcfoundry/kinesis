@@ -83,6 +83,11 @@ type Component interface {
 	// unless this has finished executing. Exceptions to this could be infra components which handle database or messaging requirements, which other
 	// components might be dependent for proper functioning.
 	Init(context.Context) error
+
+	// components which are containers, that embed Container type, should make use of PostInit to initialize aspects specific to it. Same limitations that
+	// apply to the Init method, in terms of what all logic could be included, would be applicable to PostInit method as well.
+	PostInit(context.Context) error
+
 	Start(context.Context) error
 	Stop(context.Context) error
 
@@ -364,6 +369,10 @@ func (d *SimpleComponent) notifySubscribers(notification interface{}) {
 // Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) Init(context.Context) error { return nil }
 
+// components which use Container as embedded type could override this method to have custom implementation.
+// Refer proper guidelines for implementing the method within Component interface.
+func (d *SimpleComponent) PostInit(context.Context) error { return nil }
+
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
 // Refer proper guidelines for implementing the method within Component interface.
 func (d *SimpleComponent) Start(context.Context) error {
@@ -445,6 +454,23 @@ func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
 }
 
 func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
+	// wait until component has been initialized
+	if d.Stage < Initialized {
+		stageChange := make(chan interface{})
+		defer close(stageChange)
+		err := d.Subscribe(d.Name+".SendSyncMessage", stageChange)
+		if err != nil {
+			return err
+		}
+
+		// keep on reading stage changes until component has been initialized
+		for stageChangeNotification := range stageChange {
+			if currStage, ok := stageChangeNotification.(stage); ok && currStage >= Initialized {
+				d.Unsubscribe(d.Name + ".SendSyncMessage")
+			}
+		}
+	}
+
 	mMux := d.getMmux()
 	if mMux == nil {
 		return fmt.Errorf("message mux not initialized for %v", d.GetName())

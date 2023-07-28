@@ -141,8 +141,9 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		}(comp)
 
 		// TODO: test for init new component from within init of a component
-		err := comp.Init(ctx)
-		if err != nil {
+		initErr := comp.Init(ctx)
+		postInitErr := comp.PostInit(ctx)
+		if initErr != nil || postInitErr != nil {
 			comp.setStage(Aborting)
 			comp.setStage(Tearingdown)
 		} else {
