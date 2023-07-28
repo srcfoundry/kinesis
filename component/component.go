@@ -116,12 +116,12 @@ type Component interface {
 	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
 	getInbox() chan func() (context.Context, interface{}, chan<- error)
 
-	// To set message handler functions for any message class types. Components could define its own message classifications.
-	SetMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error)
-	getMessageHandler(msgClass string) func(context.Context, interface{}) error
+	// To set blocking message handler functions for any message class types. Components could define its own message classifications.
+	SetSyncMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error)
+	getSyncMessageHandler(msgClass string) func(context.Context, interface{}) error
 
-	// DefaultMessageHandler which handles all messages except ControlMsgId types.
-	DefaultMessageHandler(context.Context, interface{}) error
+	// DefaultSyncMessageHandler is a blocking call which synchronously handles all messages except ControlMsgId types. Messages gets routed by invoking SendSyncMessage.
+	DefaultSyncMessageHandler(context.Context, interface{}) error
 
 	getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
 
@@ -422,21 +422,21 @@ func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, 
 	return d.inbox
 }
 
-func (d *SimpleComponent) SetMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error) {
+func (d *SimpleComponent) SetSyncMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error) {
 	if d.messageHandlers == nil {
 		d.messageHandlers = map[string]func(context.Context, interface{}) error{}
 	}
 	d.messageHandlers[msgClass] = msgClassHandler
 }
 
-func (d *SimpleComponent) getMessageHandler(msgClass string) func(context.Context, interface{}) error {
+func (d *SimpleComponent) getSyncMessageHandler(msgClass string) func(context.Context, interface{}) error {
 	if d.messageHandlers == nil {
 		return nil
 	}
 	return d.messageHandlers[msgClass]
 }
 
-func (d *SimpleComponent) DefaultMessageHandler(context.Context, interface{}) error {
+func (d *SimpleComponent) DefaultSyncMessageHandler(context.Context, interface{}) error {
 	return nil
 }
 

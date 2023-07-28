@@ -126,8 +126,8 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		ctx := context.Background()
 
 		// add default message handler if not added
-		if comp.getMessageHandler(comp.GetName()) == nil {
-			comp.SetMessageHandler(comp.GetName(), comp.DefaultMessageHandler)
+		if comp.getSyncMessageHandler(comp.GetName()) == nil {
+			comp.SetSyncMessageHandler(comp.GetName(), comp.DefaultSyncMessageHandler)
 		}
 
 		go c.startMmux(ctx, comp)
@@ -224,7 +224,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		}
 
 	forwardMessage:
-		handler := comp.getMessageHandler(msgClass.(string))
+		handler := comp.getSyncMessageHandler(msgClass.(string))
 		err := handler(msgCtx, msg)
 		errCh <- err
 	}
