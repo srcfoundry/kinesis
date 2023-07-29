@@ -15,13 +15,13 @@ import (
 	"github.com/mohae/deepcopy"
 )
 
-// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with a lookup map in determining the
-// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
-type MsgClassifierId string
+// MsgType could be used by Components' to define its own set of message types. Used in conjunction with a lookup map in determining the
+// message classification associated to the MsgType, and invoking the appropriate handler function registered to process the message type.
+type MsgType string
 
 const (
-	ControlMsgId   MsgClassifierId = "ControlMsgId"   // ControlMsgId to classify controlMsg
-	ComponentMsgId MsgClassifierId = "ComponentMsgId" // ComponentMsgId to classify any Component type being passed
+	ControlMsgType   MsgType = "ControlMsgType"   // ControlMsgType to classify controlMsg
+	ComponentMsgType MsgType = "ComponentMsgType" // ComponentMsgType to classify any Component type being passed
 )
 
 type (
@@ -93,9 +93,9 @@ type Component interface {
 
 	// SendSyncMessage could be used to synchronously send any type of message to a component.
 	//
-	// MsgClassifierId could be used by Components' to define its own set of message classifications. Used in conjunction with msgClassLookup in determining the
-	// message classification associated to the MsgClassifierId, and invoking the appropriate handler function registered to process the message class type.
-	SendSyncMessage(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error
+	// msgType could be used by Components' to define its own set of message types. Used in conjunction with msgsLookup in determining the
+	// message type associated to the MsgType, and invoking the appropriate handler function registered to process the message type.
+	SendSyncMessage(timeout time.Duration, msgType interface{}, msgsLookup map[interface{}]interface{}) error
 
 	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
 	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
@@ -121,14 +121,14 @@ type Component interface {
 	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
 	getInbox() chan func() (context.Context, interface{}, chan<- error)
 
-	// To set blocking message handler functions for any message class types. Components could define its own message classifications.
-	SetSyncMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error)
-	getSyncMessageHandler(msgClass string) func(context.Context, interface{}) error
+	// To set blocking message handler functions for any message types. Components could define its own message types.
+	SetSyncMessageHandler(msgType interface{}, msgTypeHandler func(context.Context, interface{}) error)
+	getSyncMessageHandler(msgType interface{}) func(context.Context, interface{}) error
 
-	// DefaultSyncMessageHandler is a blocking call which synchronously handles all messages except ControlMsgId types. Messages gets routed by invoking SendSyncMessage.
+	// DefaultSyncMessageHandler is a blocking call which synchronously handles all messages except ControMsgType types. Messages gets routed by invoking SendSyncMessage.
 	DefaultSyncMessageHandler(context.Context, interface{}) error
 
-	getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
+	getMmux() chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error)
 
 	// IsRestartableWithDelay indicates if component is to be restarted if Start() fails with error. The method could include logic for exponential backoff
 	// to return the delay duration between restarts.
@@ -164,8 +164,8 @@ type SimpleComponent struct {
 	State           state `json:"state"`
 
 	// message mux
-	mmux            chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error)
-	messageHandlers map[string]func(context.Context, interface{}) error
+	mmux            chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error)
+	messageHandlers map[interface{}]func(context.Context, interface{}) error
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
@@ -188,7 +188,7 @@ func (d *SimpleComponent) GetURI() string {
 }
 
 func (d *SimpleComponent) preInit() {
-	d.mmux = make(chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error), 1)
+	d.mmux = make(chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error), 1)
 }
 
 func (d *SimpleComponent) tearDown() {
@@ -408,7 +408,7 @@ func (d *SimpleComponent) GetContainer() *Container {
 	return d.container
 }
 
-func (d *SimpleComponent) getMmux() chan func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error) {
+func (d *SimpleComponent) getMmux() chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error) {
 	return d.mmux
 }
 
@@ -431,18 +431,18 @@ func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, 
 	return d.inbox
 }
 
-func (d *SimpleComponent) SetSyncMessageHandler(msgClass string, msgClassHandler func(context.Context, interface{}) error) {
+func (d *SimpleComponent) SetSyncMessageHandler(msgType interface{}, msgTypeHandler func(context.Context, interface{}) error) {
 	if d.messageHandlers == nil {
-		d.messageHandlers = map[string]func(context.Context, interface{}) error{}
+		d.messageHandlers = map[interface{}]func(context.Context, interface{}) error{}
 	}
-	d.messageHandlers[msgClass] = msgClassHandler
+	d.messageHandlers[msgType] = msgTypeHandler
 }
 
-func (d *SimpleComponent) getSyncMessageHandler(msgClass string) func(context.Context, interface{}) error {
+func (d *SimpleComponent) getSyncMessageHandler(msgType interface{}) func(context.Context, interface{}) error {
 	if d.messageHandlers == nil {
 		return nil
 	}
-	return d.messageHandlers[msgClass]
+	return d.messageHandlers[msgType]
 }
 
 func (d *SimpleComponent) DefaultSyncMessageHandler(context.Context, interface{}) error {
@@ -453,7 +453,7 @@ func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
 	return d.RWMutex
 }
 
-func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgClassId MsgClassifierId, msgClassLookup map[MsgClassifierId]interface{}, message interface{}) error {
+func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgType interface{}, msgsLookup map[interface{}]interface{}) error {
 	// wait until component has been initialized
 	if d.Stage < Initialized {
 		stageChange := make(chan interface{})
@@ -482,8 +482,8 @@ func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgClassId MsgC
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	mMux <- func() (context.Context, MsgClassifierId, map[MsgClassifierId]interface{}, interface{}, chan<- error) {
-		return ctx, msgClassId, msgClassLookup, message, errCh
+	mMux <- func() (context.Context, interface{}, map[interface{}]interface{}, chan<- error) {
+		return ctx, msgType, msgsLookup, errCh
 	}
 
 	select {

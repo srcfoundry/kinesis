@@ -58,7 +58,7 @@ func (c *Container) Start(ctx context.Context) error {
 			log.Println(c.GetName(), "received", osSignal)
 
 			log.Println("proceed to shutdown", c.GetName())
-			err := c.SendSyncMessage(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+			err := c.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 			if err == nil {
 				log.Println("Shutdown notification was successfully sent to", c.GetName())
 				return nil
@@ -191,12 +191,33 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	}(ctx, comp)
 
 	for msgFunc := range comp.getMmux() {
-		msgCtx, msgClassId, msgClassLookup, msg, errCh := msgFunc()
-		msgClass := msgClassLookup[msgClassId]
+		msgCtx, msgType, msgsLookup, errCh := msgFunc()
+		var err error
 
-		switch msgClassId {
-		case ControlMsgId:
-			switch msgClass {
+		// performing sync message validation
+		if msgType == nil {
+			err = fmt.Errorf("encountered nil msgType for %s", comp.GetName())
+		} else if msgsLookup == nil {
+			err = fmt.Errorf("encountered nil msgsLookup for %s", comp.GetName())
+		}
+
+		if err != nil {
+			log.Println(err)
+			if errCh != nil {
+				errCh <- err
+			}
+			continue
+		}
+
+		// read message from the lookup & take appropriate actions based on the message type.
+		msg := msgsLookup[msgType]
+
+		//msgCtx, msgClassId, msgClassLookup, msg, errCh := msgFunc()
+		//msgClass := msgClassLookup[msgClassId]
+
+		switch msgType {
+		case ControlMsgType:
+			switch msg {
 			//additional control handling cases goes here
 			case Shutdown:
 				comp.setStage(Stopping)
@@ -206,8 +227,8 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 					return
 				}
 			}
-		case ComponentMsgId:
-			switch msgClass {
+		case ComponentMsgType:
+			switch msg.(Component).GetName() {
 			case comp.GetName():
 				// check if message is a copy of the same underlying concrete component type
 				msgCompType, compConcreteType, msgCompConcreteType := msg.(Component), reflect.TypeOf(comp).Elem(), reflect.TypeOf(msg).Elem()
@@ -225,8 +246,12 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		}
 
 	forwardMessage:
-		handler := comp.getSyncMessageHandler(msgClass.(string))
-		err := handler(msgCtx, msg)
+		handler := comp.getSyncMessageHandler(msgType)
+		if handler == nil {
+			log.Printf("unable to find handler for message type: %s. passing message to component default message handler", msgType)
+			handler = comp.getSyncMessageHandler(comp.GetName())
+		}
+		err = handler(msgCtx, msg)
 		errCh <- err
 	}
 }
@@ -312,7 +337,7 @@ func (c *Container) Stop(ctx context.Context) error {
 		} else if !c.Matches(cComp.comp) {
 			log.Println("sending", Shutdown, "signal to", cName)
 
-			err := cComp.comp.SendSyncMessage(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+			err := cComp.comp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 			if err != nil {
 				return err
 			}

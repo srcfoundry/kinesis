@@ -21,7 +21,7 @@ func shutdownTestContainer(c *Container, delay time.Duration) {
 	go func() {
 		time.Sleep(delay)
 		log.Println("shutdownTestContainer....")
-		c.SendSyncMessage(5*time.Second, ControlMsgId, map[MsgClassifierId]interface{}{ControlMsgId: Shutdown}, nil)
+		c.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 	}()
 
 outer:
@@ -234,9 +234,65 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := testComp.SendSyncMessage(5*time.Second, ComponentMsgId, map[MsgClassifierId]interface{}{ComponentMsgId: testComp.GetName()}, newCompCopy)
+			err := testComp.SendSyncMessage(5*time.Second, ComponentMsgType, map[interface{}]interface{}{ComponentMsgType: newCompCopy})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NotifyValidComponentCopy  error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+		})
+	}
+
+	shutdownTestContainer(c, 2*time.Second)
+}
+
+func TestContainer_NotifyInvalidComponentCopy(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.RWMutex = &sync.RWMutex{}
+	c.Add(c)
+
+	type TestSimpleType struct {
+		SimpleComponent
+		String1   string
+		Int1      int
+		MapValues map[string]bool
+	}
+
+	var (
+		testComponentName string = "simpleTestComponent"
+		intVal            int    = 7753
+		stringVal         string = "simpleStringValue"
+		mapVals                  = map[string]bool{"key1": true, "key2": false}
+	)
+	testComp := &TestSimpleType{}
+	testComp.Name = testComponentName
+	testComp.RWMutex = &sync.RWMutex{}
+	testComp.String1 = stringVal
+	testComp.Int1 = intVal
+	testComp.MapValues = mapVals
+	c.Add(testComp)
+
+	time.Sleep(1 * time.Second)
+
+	newCompCopy, _ := c.GetComponent(testComponentName)
+	// overwrite Etag
+	newCompCopy.setEtag("cafebeet")
+
+	tests := []struct {
+		name    string
+		wantErr bool
+	}{
+		{
+			name:    "NotifyInvalidComponentCopy",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := testComp.SendSyncMessage(5*time.Second, ComponentMsgType, map[interface{}]interface{}{ComponentMsgType: newCompCopy})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NotifyInvalidComponentCopy  error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 		})
