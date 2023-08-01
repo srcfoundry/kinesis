@@ -74,12 +74,17 @@ func (c *Container) Add(comp Component) error {
 		return err
 	}
 
-	if !c.Matches(comp) && comp.GetName() == c.GetName() {
+	currCompName := comp.GetName()
+	if !c.Matches(comp) && currCompName == c.GetName() {
 		return fmt.Errorf("Component name could not have same name as container")
 	}
 
+	if _, found := c.cComponents[currCompName]; found {
+		return fmt.Errorf("Component %s already included within container", currCompName)
+	}
+
 	if comp != nil && comp.GetRWLock() == nil {
-		log.Fatalf("RW mutex has not been initialized for %s", comp.GetName())
+		log.Fatalf("RW mutex has not been initialized for %s", currCompName)
 	}
 
 	if c.compActivationQueue == nil && c.GetStage() < Stopping {
