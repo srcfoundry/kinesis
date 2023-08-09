@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"reflect"
 	"regexp"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -187,7 +188,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		// making sure panics are caught while processing messages
 		if r := recover(); r != nil {
-			log.Println(comp, "mmux recovering from panic:", r)
+			log.Println(comp, "mmux recovering from panic:", r, string(debug.Stack()))
 		}
 		if comp.GetState() != Active {
 			return
@@ -265,7 +266,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		// making sure panics are caught while starting a component
 		if r := recover(); r != nil {
-			log.Println(comp, "recovering from panic:", r)
+			log.Println(comp, "mmux recovering from panic:", r, string(debug.Stack()))
 		}
 
 		if comp.GetStage() >= Stopping {
