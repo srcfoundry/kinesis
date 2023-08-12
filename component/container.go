@@ -80,14 +80,6 @@ func (c *Container) Add(comp Component) error {
 		return fmt.Errorf("Component name could not have same name as container")
 	}
 
-	if _, found := c.cComponents[currCompName]; found {
-		return fmt.Errorf("Component %s already included within container", currCompName)
-	}
-
-	if comp != nil && comp.GetRWLock() == nil {
-		log.Fatalf("RW mutex has not been initialized for %s", currCompName)
-	}
-
 	if c.compActivationQueue == nil && c.GetStage() < Stopping {
 		c.compActivationQueue = make(chan Component, 1)
 
@@ -107,9 +99,9 @@ func (c *Container) Add(comp Component) error {
 					log.Println("failed to add component due to", err.Error())
 				}
 				c.cComponents[nextComp.GetName()] = cComm
-				c.GetRWLock().Lock()
+				c.getRWLock().Lock()
 				c.components = append(c.components, nextComp.GetName())
-				c.GetRWLock().Unlock()
+				c.getRWLock().Unlock()
 			}
 		}()
 	}
@@ -120,7 +112,7 @@ func (c *Container) Add(comp Component) error {
 
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
-	comp.GetRWLock().Lock()
+	comp.getRWLock().Lock()
 
 	switch comp.GetStage() {
 	case Submitted:
@@ -178,7 +170,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		c.removeComponent(comp.GetName())
 	}
 
-	comp.GetRWLock().Unlock()
+	comp.getRWLock().Unlock()
 	return nil
 }
 
@@ -379,8 +371,8 @@ func (c *Container) Stop(ctx context.Context) error {
 // fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
 // be copied over.
 func (c *Container) GetComponent(name string) (Component, error) {
-	c.GetRWLock().RLock()
-	defer c.GetRWLock().RUnlock()
+	c.getRWLock().RLock()
+	defer c.getRWLock().RUnlock()
 
 	var (
 		cComp cComponent

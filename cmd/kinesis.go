@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"os"
-	"sync"
 
 	"github.com/srcfoundry/kinesis"
 	"github.com/srcfoundry/kinesis/common"
@@ -13,7 +12,6 @@ import (
 func main() {
 	app := new(kinesis.App)
 	app.Name = "kinesis"
-	app.RWMutex = &sync.RWMutex{}
 	err := app.Add(app)
 	if err != nil {
 		log.Printf("failed to start %s, due to %s", app.GetName(), err)
@@ -22,7 +20,6 @@ func main() {
 
 	httpServer := new(common.HttpServer)
 	httpServer.Name = "httpserver"
-	httpServer.RWMutex = &sync.RWMutex{}
 	httpServer.SetAsNonRestEntity(true)
 	err = app.Add(httpServer)
 	if err != nil {

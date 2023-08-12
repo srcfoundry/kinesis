@@ -8,7 +8,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -40,7 +39,6 @@ outer:
 func TestContainer_Add(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
-	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type args struct {
@@ -54,7 +52,7 @@ func TestContainer_Add(t *testing.T) {
 		{
 			name: "Add_SimpleComponent_test2",
 			args: args{
-				comp: &SimpleComponent{Name: "simpleTestComponent", RWMutex: &sync.RWMutex{}},
+				comp: &SimpleComponent{Name: "simpleTestComponent"},
 			},
 			wantErr: false,
 		},
@@ -74,7 +72,6 @@ func TestContainer_Add(t *testing.T) {
 func TestContainer_HandleInterrupt(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
-	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type args struct {
@@ -88,7 +85,7 @@ func TestContainer_HandleInterrupt(t *testing.T) {
 		{
 			name: "SimpleComponent_HandleInterrupt",
 			args: args{
-				comp: &SimpleComponent{Name: "simpleTestComponent", RWMutex: &sync.RWMutex{}},
+				comp: &SimpleComponent{Name: "simpleTestComponent"},
 			},
 			wantErr: false,
 		},
@@ -113,7 +110,6 @@ func TestContainer_HandleInterrupt(t *testing.T) {
 func TestContainer_GetComponentCopy(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
-	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type TestSimpleType struct {
@@ -130,7 +126,6 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 	)
 	testComp := &TestSimpleType{}
 	testComp.Name = "simpleTestComponent"
-	testComp.RWMutex = &sync.RWMutex{}
 	testComp.String1 = stringVal
 	testComp.Int1 = intVal
 	testComp.MapValues = mapVals
@@ -194,7 +189,6 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
-	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type TestSimpleType struct {
@@ -212,7 +206,6 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 	)
 	testComp := &TestSimpleType{}
 	testComp.Name = testComponentName
-	testComp.RWMutex = &sync.RWMutex{}
 	testComp.String1 = stringVal
 	testComp.Int1 = intVal
 	testComp.MapValues = mapVals
@@ -248,7 +241,6 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 func TestContainer_NotifyInvalidComponentCopy(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
-	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type TestSimpleType struct {
@@ -266,7 +258,6 @@ func TestContainer_NotifyInvalidComponentCopy(t *testing.T) {
 	)
 	testComp := &TestSimpleType{}
 	testComp.Name = testComponentName
-	testComp.RWMutex = &sync.RWMutex{}
 	testComp.String1 = stringVal
 	testComp.Int1 = intVal
 	testComp.MapValues = mapVals
@@ -304,7 +295,6 @@ func TestContainer_NotifyInvalidComponentCopy(t *testing.T) {
 func TestContainer_VerifyComponentInitOrder(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
-	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	type TestSimpleType struct {
@@ -313,15 +303,12 @@ func TestContainer_VerifyComponentInitOrder(t *testing.T) {
 
 	testComp1 := &TestSimpleType{}
 	testComp1.Name = "simpleTestComponent1"
-	testComp1.RWMutex = &sync.RWMutex{}
 
 	testComp2 := &TestSimpleType{}
 	testComp2.Name = "simpleTestComponent2"
-	testComp2.RWMutex = &sync.RWMutex{}
 
 	testComp3 := &TestSimpleType{}
 	testComp3.Name = "simpleTestComponent3"
-	testComp3.RWMutex = &sync.RWMutex{}
 
 	type args struct {
 		comp Component
@@ -540,12 +527,10 @@ func (d *TestRestartableSimpleType) IsRestartableWithDelay() (bool, time.Duratio
 func TestContainer_AddRestartableComponent(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
-	c.RWMutex = &sync.RWMutex{}
 	c.Add(c)
 
 	restartableComponent := &TestRestartableSimpleType{}
 	restartableComponent.Name = "restartableTestComponent"
-	restartableComponent.RWMutex = &sync.RWMutex{}
 
 	type args struct {
 		comp Component

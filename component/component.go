@@ -137,7 +137,7 @@ type Component interface {
 	setContainer(*Container)
 	GetContainer() *Container
 
-	GetRWLock() *sync.RWMutex
+	getRWLock() *sync.RWMutex
 
 	setHash(uint64)
 	Hash() uint64
@@ -169,7 +169,8 @@ type SimpleComponent struct {
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
-	RWMutex            *sync.RWMutex `json:"-" hash:"ignore"`
+	// rwLock maintained as generic type to prevent direct access to RWMutex and to use the getLock() method instead
+	rwLock interface{} `json:"-" hash:"ignore"`
 
 	subscribers map[string]chan<- interface{}
 	callbacks   []func(context.Context, int, interface{})
@@ -449,8 +450,11 @@ func (d *SimpleComponent) DefaultSyncMessageHandler(context.Context, interface{}
 	return nil
 }
 
-func (d *SimpleComponent) GetRWLock() *sync.RWMutex {
-	return d.RWMutex
+func (d *SimpleComponent) getRWLock() *sync.RWMutex {
+	if d.rwLock == nil {
+		d.rwLock = &sync.RWMutex{}
+	}
+	return d.rwLock.(*sync.RWMutex)
 }
 
 func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgType interface{}, msgsLookup map[interface{}]interface{}) error {
