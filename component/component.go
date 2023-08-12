@@ -402,10 +402,14 @@ func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
 func (d *SimpleComponent) Stop(context.Context) error { return nil }
 
 func (d *SimpleComponent) setContainer(c *Container) {
+	d.getRWLock().Lock()
+	defer d.getRWLock().Unlock()
 	d.container = c
 }
 
 func (d *SimpleComponent) GetContainer() *Container {
+	d.getRWLock().RLock()
+	defer d.getRWLock().RUnlock()
 	return d.container
 }
 
