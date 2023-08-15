@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -137,7 +138,11 @@ type Component interface {
 	setContainer(*Container)
 	GetContainer() *Container
 
-	getRWLock() *sync.RWMutex
+	// lock to acquire prior to component mutation
+	getMutatingLock() *sync.RWMutex
+
+	// lock to acquire prior to component stage/state transition
+	getstateTransitionLock() *sync.RWMutex
 
 	setHash(uint64)
 	Hash() uint64
@@ -169,8 +174,15 @@ type SimpleComponent struct {
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
-	// rwLock maintained as generic type to prevent direct access to RWMutex and to use the getLock() method instead
-	rwLock interface{} `json:"-" hash:"ignore"`
+	// mutatingLock maintained as generic type to prevent direct access to RWMutex and to use the getMutatingLock() method instead
+	mutatingLock interface{} `json:"-" hash:"ignore"`
+	// simple type to enforce atomic access within functions.primarily used in getMutatingLock function
+	mutatingAtomicCAS atomic.Bool `json:"-" hash:"ignore"`
+
+	// stateTransitionLock maintained as generic type to prevent direct access to RWMutex and to use the getStateTransitionLock() method instead
+	stateTransitionLock interface{} `json:"-" hash:"ignore"`
+	// simple type to enforce atomic access within functions.primarily used in getStateTransitionLock function
+	stateAtomicCAS atomic.Bool `json:"-" hash:"ignore"`
 
 	subscribers map[string]chan<- interface{}
 	callbacks   []func(context.Context, int, interface{})
@@ -220,8 +232,10 @@ func (d *SimpleComponent) String() string {
 }
 
 func (d *SimpleComponent) setStage(s stage) {
+	d.getstateTransitionLock().Lock()
 	log.Println(d, s)
 	d.Stage = s
+
 	d.invokeCallbacks(s)
 	d.notifySubscribers(s)
 
@@ -230,6 +244,7 @@ func (d *SimpleComponent) setStage(s stage) {
 	} else {
 		d.setState(Inactive)
 	}
+	d.getstateTransitionLock().Unlock()
 }
 
 func (d *SimpleComponent) GetState() state {
@@ -248,6 +263,8 @@ func (d *SimpleComponent) setState(s state) {
 }
 
 func (d *SimpleComponent) GetStage() stage {
+	d.getstateTransitionLock().RLock()
+	defer d.getstateTransitionLock().RUnlock()
 	return d.Stage
 }
 
@@ -402,14 +419,12 @@ func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
 func (d *SimpleComponent) Stop(context.Context) error { return nil }
 
 func (d *SimpleComponent) setContainer(c *Container) {
-	d.getRWLock().Lock()
-	defer d.getRWLock().Unlock()
+	d.getMutatingLock().Lock()
+	defer d.getMutatingLock().Unlock()
 	d.container = c
 }
 
 func (d *SimpleComponent) GetContainer() *Container {
-	d.getRWLock().RLock()
-	defer d.getRWLock().RUnlock()
 	return d.container
 }
 
@@ -454,34 +469,40 @@ func (d *SimpleComponent) DefaultSyncMessageHandler(context.Context, interface{}
 	return nil
 }
 
-func (d *SimpleComponent) getRWLock() *sync.RWMutex {
-	if d.rwLock == nil {
-		d.rwLock = &sync.RWMutex{}
+func (d *SimpleComponent) getMutatingLock() *sync.RWMutex {
+	d.mutatingAtomicCAS.CompareAndSwap(d.mutatingAtomicCAS.Load(), !d.mutatingAtomicCAS.Load())
+	if d.mutatingLock == nil {
+		d.mutatingLock = &sync.RWMutex{}
 	}
-	return d.rwLock.(*sync.RWMutex)
+	return d.mutatingLock.(*sync.RWMutex)
+}
+
+func (d *SimpleComponent) getstateTransitionLock() *sync.RWMutex {
+	d.stateAtomicCAS.CompareAndSwap(d.stateAtomicCAS.Load(), !d.stateAtomicCAS.Load())
+	if d.stateTransitionLock == nil {
+		d.stateTransitionLock = &sync.RWMutex{}
+	}
+	return d.stateTransitionLock.(*sync.RWMutex)
 }
 
 func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgType interface{}, msgsLookup map[interface{}]interface{}) error {
-	// wait until component has been initialized
-	if d.Stage < Initialized {
-		stageChange := make(chan interface{})
-		defer close(stageChange)
-		err := d.Subscribe(d.Name+".SendSyncMessage", stageChange)
-		if err != nil {
-			return err
-		}
-
-		// keep on reading stage changes until component has been initialized
-		for stageChangeNotification := range stageChange {
-			if currStage, ok := stageChangeNotification.(stage); ok && currStage >= Initialized {
-				d.Unsubscribe(d.Name + ".SendSyncMessage")
-			}
-		}
+	if d.GetStage() >= Stopping {
+		return fmt.Errorf("cannot process message since %s is %s", d.GetName(), d.GetStage())
 	}
 
-	mMux := d.getMmux()
-	if mMux == nil {
-		return fmt.Errorf("message mux not initialized for %v", d.GetName())
+	const retryUnits = 100
+	retryWait := timeout / retryUnits
+	var mMux chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error)
+
+	// wait each retryWait until mmux has been initialized or max retries have been reached
+	for retries := 0; retries <= retryUnits; retries++ {
+		if mMux = d.getMmux(); mMux == nil {
+			time.Sleep(retryWait)
+		} else {
+			// calculate remaining timeout after the retries if any
+			timeout -= (time.Duration(retries) * retryWait)
+			break
+		}
 	}
 
 	errCh := make(chan error)
@@ -494,18 +515,17 @@ func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgType interfa
 		return ctx, msgType, msgsLookup, errCh
 	}
 
+	var err error
+
 	select {
 	case <-time.After(15 * time.Second):
-		return errors.New("notification max timeout")
+		err = errors.New("notification max timeout")
 	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-errCh:
-		if err != nil {
-			return err
-		}
+		err = ctx.Err()
+	case err = <-errCh:
 	}
 
-	return nil
+	return err
 }
 
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {

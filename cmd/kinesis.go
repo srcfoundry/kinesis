@@ -4,10 +4,19 @@ import (
 	"log"
 	"os"
 
+	"net/http"
+	_ "net/http/pprof"
+
 	"github.com/srcfoundry/kinesis"
 	"github.com/srcfoundry/kinesis/common"
 	"github.com/srcfoundry/kinesis/component"
 )
+
+func init() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+}
 
 func main() {
 	app := new(kinesis.App)

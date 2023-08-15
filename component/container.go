@@ -99,9 +99,9 @@ func (c *Container) Add(comp Component) error {
 					log.Println("failed to add component due to", err.Error())
 				}
 				c.cComponents[nextComp.GetName()] = cComm
-				c.getRWLock().Lock()
+				c.getMutatingLock().Lock()
 				c.components = append(c.components, nextComp.GetName())
-				c.getRWLock().Unlock()
+				c.getMutatingLock().Unlock()
 			}
 		}()
 	}
@@ -112,7 +112,7 @@ func (c *Container) Add(comp Component) error {
 
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
-	comp.getRWLock().Lock()
+	comp.getMutatingLock().Lock()
 
 	switch comp.GetStage() {
 	case Submitted:
@@ -157,6 +157,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Stopping:
 		err := comp.Stop(ctx)
 		if err != nil {
+			log.Println(err)
 			return err
 		}
 		c.removeHttpHandlers(comp)
@@ -170,7 +171,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		c.removeComponent(comp.GetName())
 	}
 
-	comp.getRWLock().Unlock()
+	comp.getMutatingLock().Unlock()
 	return nil
 }
 
@@ -210,20 +211,14 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		// read message from the lookup & take appropriate actions based on the message type.
 		msg := msgsLookup[msgType]
 
-		//msgCtx, msgClassId, msgClassLookup, msg, errCh := msgFunc()
-		//msgClass := msgClassLookup[msgClassId]
-
 		switch msgType {
 		case ControlMsgType:
 			switch msg {
 			//additional control handling cases goes here
 			case Shutdown:
 				comp.setStage(Stopping)
-				err := c.componentLifecycleFSM(msgCtx, comp)
-				errCh <- err
-				if err == nil {
-					return
-				}
+				_ = c.componentLifecycleFSM(msgCtx, comp)
+				return
 			}
 		case ComponentMsgType:
 			switch msg.(Component).GetName() {
@@ -260,7 +255,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		if r := recover(); r != nil {
 			log.Println(comp, "mmux recovering from panic:", r, string(debug.Stack()))
 		}
-
+		log.Println(comp, "check within startComponent defer func()", comp.GetStage())
 		if comp.GetStage() >= Stopping {
 			return
 		}
@@ -337,7 +332,7 @@ func (c *Container) Stop(ctx context.Context) error {
 
 			err := cComp.comp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 			if err != nil {
-				return err
+				log.Println(c, "received error:", err, "after sending", Shutdown, "signal to", cName)
 			}
 		}
 
@@ -371,8 +366,8 @@ func (c *Container) Stop(ctx context.Context) error {
 // fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
 // be copied over.
 func (c *Container) GetComponent(name string) (Component, error) {
-	c.getRWLock().RLock()
-	defer c.getRWLock().RUnlock()
+	c.getMutatingLock().RLock()
+	defer c.getMutatingLock().RUnlock()
 
 	var (
 		cComp cComponent
