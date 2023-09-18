@@ -92,11 +92,13 @@ func (c *Container) Add(comp Component) error {
 				err := c.toCanonical(nextComp, &cComm)
 				if err != nil {
 					log.Println(nextComp, "failed to convert to canonical type due to", err.Error())
+					continue
 				}
 
 				if _, found := c.cComponents[nextComp.GetName()]; found {
 					err := fmt.Errorf("%v already activated", nextComp.GetName())
 					log.Println("failed to add component due to", err.Error())
+					continue
 				}
 				c.cComponents[nextComp.GetName()] = cComm
 				c.getMutatingLock().Lock()
