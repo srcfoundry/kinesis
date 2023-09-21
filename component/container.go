@@ -29,7 +29,7 @@ type Container struct {
 	// channel maintained as a queue for adding & activating Components sequentially.
 	// Addition of components is made possible through a dedicated go routine which reads from compActivationQueue channel, thereby unblocking the caller to
 	// perform other activities like subscribing to state change notifications or just continuing with remaining execution.
-	compActivationQueue chan Component
+	//compActivationQueue chan Component
 
 	cComponents map[string]cComponent
 	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
@@ -80,35 +80,48 @@ func (c *Container) Add(comp Component) error {
 		return fmt.Errorf("Component name could not have same name as container")
 	}
 
-	if c.compActivationQueue == nil && c.GetStage() < Stopping {
-		c.compActivationQueue = make(chan Component, 1)
+	// if c.compActivationQueue == nil && c.GetStage() < Stopping {
+	// 	c.compActivationQueue = make(chan Component, 1)
 
-		// Even though components could be added asynchronously, it is activated sequentially since its being read off the compActivationQueue channel, thereby maintaining order.
-		go func() {
-			for nextComp := range c.compActivationQueue {
-				c.componentLifecycleFSM(context.TODO(), nextComp)
-
-				cComm := cComponent{}
-				err := c.toCanonical(nextComp, &cComm)
-				if err != nil {
-					log.Println(nextComp, "failed to convert to canonical type due to", err.Error())
-					continue
-				}
-
-				if _, found := c.cComponents[nextComp.GetName()]; found {
-					err := fmt.Errorf("%v already activated", nextComp.GetName())
-					log.Println("failed to add component due to", err.Error())
-					continue
-				}
-				c.cComponents[nextComp.GetName()] = cComm
-				c.getMutatingLock().Lock()
-				c.components = append(c.components, nextComp.GetName())
-				c.getMutatingLock().Unlock()
-			}
-		}()
+	// Even though components could be added asynchronously, it is activated sequentially since its being read off the compActivationQueue channel, thereby maintaining order.
+	// go func() {
+	// 	for nextComp := range c.compActivationQueue {
+	// proceed to initialize component
+	err = c.componentLifecycleFSM(context.TODO(), comp)
+	if err != nil {
+		log.Println(comp, "failed to activate due to", err.Error())
+		return err
 	}
 
-	c.compActivationQueue <- comp
+	cComm := cComponent{}
+	err = c.toCanonical(comp, &cComm)
+	if err != nil {
+		log.Println(comp, "failed to convert to canonical type due to", err.Error())
+		return err
+	}
+
+	if _, found := c.cComponents[comp.GetName()]; found {
+		err := fmt.Errorf("%v already activated", comp.GetName())
+		log.Println("failed to add component due to", err.Error())
+		return err
+	}
+	c.cComponents[comp.GetName()] = cComm
+	c.getMutatingLock().Lock()
+	c.components = append(c.components, comp.GetName())
+	c.getMutatingLock().Unlock()
+	//			}
+	// 	}()
+	// }
+
+	// c.compActivationQueue <- comp
+
+	// after successfull initilaization, proceed to start the component
+	err = c.componentLifecycleFSM(context.TODO(), comp)
+	if err != nil {
+		log.Println(comp, "failed to start due to", err.Error())
+		return err
+	}
+
 	return nil
 }
 
@@ -136,26 +149,48 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Preinitialized:
 		comp.setStage(Initializing)
 		ctx := context.Background()
-		defer func(comp Component) {
-			go c.componentLifecycleFSM(context.TODO(), comp)
-		}(comp)
+		// defer func(comp Component) {
+		// 	go c.componentLifecycleFSM(context.TODO(), comp)
+		// }(comp)
 
 		// TODO: test for init new component from within init of a component
-		initErr := comp.Init(ctx)
-		postInitErr := comp.PostInit(ctx)
-		if initErr != nil || postInitErr != nil {
+		err := comp.Init(ctx)
+		if err != nil {
 			comp.setStage(Aborting)
 			comp.setStage(Tearingdown)
-		} else {
-			comp.setStage(Initialized)
+			return err
 		}
-	case Initialized, Restarting, Starting:
+		err = comp.PostInit(ctx)
+		if err != nil {
+			comp.setStage(Aborting)
+			comp.setStage(Tearingdown)
+			return err
+		}
+		comp.setStage(Initialized)
+	case Initialized, Restarting:
 		comp.setStage(Starting)
 		ctx := context.Background()
 		go c.startComponent(ctx, comp)
 		comp.setStage(Started)
 	case Started:
-		// do nothing
+		ctrlMsg := ctx.Value(ControlMsgType)
+		switch ctrlMsg {
+		case RestartAfter:
+			comp.setStage(Restarting)
+			restartAfter := ctx.Value(RestartAfter)
+			delay, found := restartAfter.(time.Duration)
+			if !found {
+				delay = 5 * time.Second
+			}
+			log.Println(comp, "to restart after", delay)
+			time.Sleep(delay)
+			return nil
+		case Shutdown:
+			comp.setStage(Stopping)
+		default:
+			return nil
+		}
+		fallthrough
 	case Stopping:
 		err := comp.Stop(ctx)
 		if err != nil {
@@ -215,11 +250,15 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 
 		switch msgType {
 		case ControlMsgType:
+			msgCtx = context.WithValue(msgCtx, ControlMsgType, msg)
 			switch msg {
 			//additional control handling cases goes here
 			case Shutdown:
-				comp.setStage(Stopping)
-				_ = c.componentLifecycleFSM(msgCtx, comp)
+				err = c.componentLifecycleFSM(msgCtx, comp)
+				if err != nil {
+					log.Println(comp, "failed to Stop, due to", err)
+					continue
+				}
 				return
 			}
 		case ComponentMsgType:
@@ -269,10 +308,18 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		if delay <= time.Duration(0) {
 			delay = 5 * time.Second
 		}
-		comp.setStage(Restarting)
-		log.Println(comp, "to restart after", delay)
-		time.Sleep(delay)
-		go c.componentLifecycleFSM(ctx, comp)
+		ctx = context.WithValue(ctx, ControlMsgType, RestartAfter)
+		ctx = context.WithValue(ctx, RestartAfter, delay)
+		// comp.setStage(Restarting)
+		// log.Println(comp, "to restart after", delay)
+		// time.Sleep(delay)
+		err := c.componentLifecycleFSM(ctx, comp)
+		if err != nil {
+			log.Println(comp, "failed to restart due to", err)
+			return
+		}
+		// proceed to start the component
+		c.componentLifecycleFSM(ctx, comp)
 	}(ctx, comp)
 
 	err := comp.Start(ctx)
@@ -349,10 +396,10 @@ func (c *Container) Stop(ctx context.Context) error {
 	}
 
 	defer func() {
-		if c.compActivationQueue != nil {
-			close(c.compActivationQueue)
-			c.compActivationQueue = nil
-		}
+		// if c.compActivationQueue != nil {
+		// 	close(c.compActivationQueue)
+		// 	c.compActivationQueue = nil
+		// }
 
 		if c.signalCh != nil {
 			signal.Stop(c.signalCh)

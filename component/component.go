@@ -59,6 +59,8 @@ const (
 const (
 	EnablePeerMessaging controlMsg = iota
 	DisablePeerMessaging
+	Restart
+	RestartAfter
 	Shutdown
 	ShutdownAfter
 	Cancel
