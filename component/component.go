@@ -138,11 +138,14 @@ type Component interface {
 	setContainer(*Container)
 	GetContainer() *Container
 
+	// lock to acquire while reading/adding subscribers or callbacks
+	getNotifierLock() *sync.RWMutex
+
 	// lock to acquire prior to component mutation
 	getMutatingLock() *sync.RWMutex
 
 	// lock to acquire prior to component stage/state transition
-	getstateTransitionLock() *sync.RWMutex
+	getStateTransitionLock() *sync.RWMutex
 
 	setHash(uint64)
 	Hash() uint64
@@ -174,6 +177,12 @@ type SimpleComponent struct {
 
 	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
+
+	// notifierLock maintained as generic type to prevent direct access to RWMutex and to use the getNotifierLock() method instead
+	notifierLock interface{} `json:"-" hash:"ignore"`
+	// simple type to enforce atomic access within functions.primarily used in getNotifierLock function
+	notifierAtomicCAS atomic.Bool `json:"-" hash:"ignore"`
+
 	// mutatingLock maintained as generic type to prevent direct access to RWMutex and to use the getMutatingLock() method instead
 	mutatingLock interface{} `json:"-" hash:"ignore"`
 	// simple type to enforce atomic access within functions.primarily used in getMutatingLock function
@@ -232,7 +241,7 @@ func (d *SimpleComponent) String() string {
 }
 
 func (d *SimpleComponent) setStage(s stage) {
-	d.getstateTransitionLock().Lock()
+	d.getStateTransitionLock().Lock()
 	log.Println(d, s)
 	d.Stage = s
 
@@ -244,7 +253,7 @@ func (d *SimpleComponent) setStage(s stage) {
 	} else {
 		d.setState(Inactive)
 	}
-	d.getstateTransitionLock().Unlock()
+	d.getStateTransitionLock().Unlock()
 }
 
 func (d *SimpleComponent) GetState() state {
@@ -263,8 +272,8 @@ func (d *SimpleComponent) setState(s state) {
 }
 
 func (d *SimpleComponent) GetStage() stage {
-	d.getstateTransitionLock().RLock()
-	defer d.getstateTransitionLock().RUnlock()
+	d.getStateTransitionLock().RLock()
+	defer d.getStateTransitionLock().RUnlock()
 	return d.Stage
 }
 
@@ -293,6 +302,9 @@ func (d *SimpleComponent) IsNonRestEntity() bool {
 }
 
 func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error {
+	d.getNotifierLock().Lock()
+	defer d.getNotifierLock().Unlock()
+
 	if d.Stage > Started {
 		return fmt.Errorf("unable to add callback since %v is %v", d.GetName(), d.Stage)
 	}
@@ -306,6 +318,9 @@ func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Contex
 }
 
 func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
+	d.getNotifierLock().Lock()
+	defer d.getNotifierLock().Unlock()
+
 	if cbIndx >= len(d.callbacks) {
 		return fmt.Errorf("unable to find callback function at index %v within %v", cbIndx, d.GetName())
 	}
@@ -316,6 +331,9 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
+	d.getNotifierLock().Lock()
+	defer d.getNotifierLock().Unlock()
+
 	if d.Stage > Started {
 		return fmt.Errorf("unable to subscribe since %v is %v", d.GetName(), d.Stage)
 	}
@@ -334,6 +352,9 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 }
 
 func (d *SimpleComponent) Unsubscribe(subscriber string) error {
+	d.getNotifierLock().Lock()
+	defer d.getNotifierLock().Unlock()
+
 	if d.subscribers == nil {
 		return fmt.Errorf("unable to find %v subscribed to %v", subscriber, d.GetName())
 	}
@@ -378,6 +399,9 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 }
 
 func (d *SimpleComponent) notifySubscribers(notification interface{}) {
+	d.getNotifierLock().RLock()
+	defer d.getNotifierLock().RUnlock()
+
 	for _, subsCh := range d.subscribers {
 		subsCh <- notification
 	}
@@ -469,6 +493,14 @@ func (d *SimpleComponent) DefaultSyncMessageHandler(context.Context, interface{}
 	return nil
 }
 
+func (d *SimpleComponent) getNotifierLock() *sync.RWMutex {
+	d.notifierAtomicCAS.CompareAndSwap(d.notifierAtomicCAS.Load(), !d.notifierAtomicCAS.Load())
+	if d.notifierLock == nil {
+		d.notifierLock = &sync.RWMutex{}
+	}
+	return d.notifierLock.(*sync.RWMutex)
+}
+
 func (d *SimpleComponent) getMutatingLock() *sync.RWMutex {
 	d.mutatingAtomicCAS.CompareAndSwap(d.mutatingAtomicCAS.Load(), !d.mutatingAtomicCAS.Load())
 	if d.mutatingLock == nil {
@@ -477,7 +509,7 @@ func (d *SimpleComponent) getMutatingLock() *sync.RWMutex {
 	return d.mutatingLock.(*sync.RWMutex)
 }
 
-func (d *SimpleComponent) getstateTransitionLock() *sync.RWMutex {
+func (d *SimpleComponent) getStateTransitionLock() *sync.RWMutex {
 	d.stateAtomicCAS.CompareAndSwap(d.stateAtomicCAS.Load(), !d.stateAtomicCAS.Load())
 	if d.stateTransitionLock == nil {
 		d.stateTransitionLock = &sync.RWMutex{}
