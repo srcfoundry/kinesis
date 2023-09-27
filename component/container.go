@@ -80,12 +80,6 @@ func (c *Container) Add(comp Component) error {
 		return fmt.Errorf("Component name could not have same name as container")
 	}
 
-	// if c.compActivationQueue == nil && c.GetStage() < Stopping {
-	// 	c.compActivationQueue = make(chan Component, 1)
-
-	// Even though components could be added asynchronously, it is activated sequentially since its being read off the compActivationQueue channel, thereby maintaining order.
-	// go func() {
-	// 	for nextComp := range c.compActivationQueue {
 	// proceed to initialize component
 	err = c.componentLifecycleFSM(context.TODO(), comp)
 	if err != nil {
@@ -109,11 +103,6 @@ func (c *Container) Add(comp Component) error {
 	c.getMutatingLock().Lock()
 	c.components = append(c.components, comp.GetName())
 	c.getMutatingLock().Unlock()
-	//			}
-	// 	}()
-	// }
-
-	// c.compActivationQueue <- comp
 
 	// after successfull initilaization, proceed to start the component
 	err = c.componentLifecycleFSM(context.TODO(), comp)
@@ -150,9 +139,6 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Preinitialized:
 		comp.setStage(Initializing)
 		ctx := context.Background()
-		// defer func(comp Component) {
-		// 	go c.componentLifecycleFSM(context.TODO(), comp)
-		// }(comp)
 
 		// TODO: test for init new component from within init of a component
 		err := comp.Init(ctx)
@@ -223,10 +209,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		if r := recover(); r != nil {
 			log.Println(comp, "mmux recovering from panic:", r, string(debug.Stack()))
 		}
-		// if comp.GetState() != Active {
-		// 	go c.componentLifecycleFSM(ctx, comp)
-		// 	return
-		// }
+		// mmux would only be restarted if the component is already Started & still Active
 		ctx = context.WithValue(ctx, ControlMsgType, RestartMmux)
 		go c.componentLifecycleFSM(ctx, comp)
 	}(ctx, comp)
@@ -315,9 +298,6 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		}
 		ctx = context.WithValue(ctx, ControlMsgType, RestartAfter)
 		ctx = context.WithValue(ctx, RestartAfter, delay)
-		// comp.setStage(Restarting)
-		// log.Println(comp, "to restart after", delay)
-		// time.Sleep(delay)
 		err := c.componentLifecycleFSM(ctx, comp)
 		if err != nil {
 			log.Println(comp, "failed to restart due to", err)
@@ -401,11 +381,6 @@ func (c *Container) Stop(ctx context.Context) error {
 	}
 
 	defer func() {
-		// if c.compActivationQueue != nil {
-		// 	close(c.compActivationQueue)
-		// 	c.compActivationQueue = nil
-		// }
-
 		if c.signalCh != nil {
 			signal.Stop(c.signalCh)
 			close(c.signalCh)
