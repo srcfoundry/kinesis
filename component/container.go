@@ -24,13 +24,7 @@ type Container struct {
 	signalCh chan os.Signal
 
 	// slice to maintain the order of components being added
-	components []string
-
-	// channel maintained as a queue for adding & activating Components sequentially.
-	// Addition of components is made possible through a dedicated go routine which reads from compActivationQueue channel, thereby unblocking the caller to
-	// perform other activities like subscribing to state change notifications or just continuing with remaining execution.
-	//compActivationQueue chan Component
-
+	components  []string
 	cComponents map[string]cComponent
 	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
 }
