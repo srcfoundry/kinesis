@@ -128,6 +128,7 @@ func (c *Container) Add(comp Component) error {
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
 	comp.getMutatingLock().Lock()
+	defer comp.getMutatingLock().Unlock()
 
 	switch comp.GetStage() {
 	case Submitted:
@@ -175,6 +176,9 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Started:
 		ctrlMsg := ctx.Value(ControlMsgType)
 		switch ctrlMsg {
+		case RestartMmux:
+			log.Println("restarting mmux for", comp)
+			go c.startMmux(ctx, comp)
 		case RestartAfter:
 			comp.setStage(Restarting)
 			restartAfter := ctx.Value(RestartAfter)
@@ -208,7 +212,6 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		c.removeComponent(comp.GetName())
 	}
 
-	comp.getMutatingLock().Unlock()
 	return nil
 }
 
@@ -220,10 +223,12 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		if r := recover(); r != nil {
 			log.Println(comp, "mmux recovering from panic:", r, string(debug.Stack()))
 		}
-		if comp.GetState() != Active {
-			return
-		}
-		go c.startMmux(ctx, comp)
+		// if comp.GetState() != Active {
+		// 	go c.componentLifecycleFSM(ctx, comp)
+		// 	return
+		// }
+		ctx = context.WithValue(ctx, ControlMsgType, RestartMmux)
+		go c.componentLifecycleFSM(ctx, comp)
 	}(ctx, comp)
 
 	for msgFunc := range comp.getMmux() {

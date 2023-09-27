@@ -12,15 +12,16 @@ func _() {
 	_ = x[DisablePeerMessaging-1]
 	_ = x[Restart-2]
 	_ = x[RestartAfter-3]
-	_ = x[Shutdown-4]
-	_ = x[ShutdownAfter-5]
-	_ = x[Cancel-6]
-	_ = x[CancelAfter-7]
+	_ = x[RestartMmux-4]
+	_ = x[Shutdown-5]
+	_ = x[ShutdownAfter-6]
+	_ = x[Cancel-7]
+	_ = x[CancelAfter-8]
 }
 
-const _controlMsg_name = "EnablePeerMessagingDisablePeerMessagingRestartRestartAfterShutdownShutdownAfterCancelCancelAfter"
+const _controlMsg_name = "EnablePeerMessagingDisablePeerMessagingRestartRestartAfterRestartMmuxShutdownShutdownAfterCancelCancelAfter"
 
-var _controlMsg_index = [...]uint8{0, 19, 39, 46, 58, 66, 79, 85, 96}
+var _controlMsg_index = [...]uint8{0, 19, 39, 46, 58, 69, 77, 90, 96, 107}
 
 func (i controlMsg) String() string {
 	if i < 0 || i >= controlMsg(len(_controlMsg_index)-1) {

@@ -61,6 +61,7 @@ const (
 	DisablePeerMessaging
 	Restart
 	RestartAfter
+	RestartMmux
 	Shutdown
 	ShutdownAfter
 	Cancel
@@ -237,6 +238,7 @@ func (d *SimpleComponent) setStage(s stage) {
 	d.getstateTransitionLock().Lock()
 	log.Println(d, s)
 	d.Stage = s
+	d.getstateTransitionLock().Unlock()
 
 	d.invokeCallbacks(s)
 	d.notifySubscribers(s)
@@ -246,7 +248,6 @@ func (d *SimpleComponent) setStage(s stage) {
 	} else {
 		d.setState(Inactive)
 	}
-	d.getstateTransitionLock().Unlock()
 }
 
 func (d *SimpleComponent) GetState() state {
