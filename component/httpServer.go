@@ -1,4 +1,6 @@
-package common
+//go:build http
+
+package component
 
 import (
 	"context"
@@ -8,17 +10,23 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/srcfoundry/kinesis/component"
 )
 
+func init() {
+	httpServer := new(HttpServer)
+	httpServer.Name = "httpserver"
+	httpServer.SetAsNonRestEntity(true)
+	AttachComponent(false, httpServer)
+}
+
 var (
-	runOnce         sync.Once
+	runOnceHttp     sync.Once
 	defaultHttpPort string = "8080"
 )
 
 // HttpSever is designed to be a singleton component which listens to http requests on the defaultHttpPort
 type HttpServer struct {
-	component.SimpleComponent
+	SimpleComponent
 	HttpPort string
 	router   *mux.Router
 	server   http.Server
@@ -29,7 +37,7 @@ func (h *HttpServer) Init(ctx context.Context) error {
 	isAlreadyStarted := make(chan bool, 2)
 	defer close(isAlreadyStarted)
 
-	runOnce.Do(func() {
+	runOnceHttp.Do(func() {
 		// indicate if initializing for the first time
 		isAlreadyStarted <- false
 		h.router = mux.NewRouter()
@@ -77,7 +85,7 @@ func (h *HttpServer) Stop(ctx context.Context) error {
 	return h.server.Shutdown(ctx)
 }
 
-func httpHandlerFunc(c *component.Container) func(w http.ResponseWriter, r *http.Request) {
+func httpHandlerFunc(c *Container) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		httpHandler := c.GetHttpHandler(r.URL.Path)
 		if httpHandler != nil {
