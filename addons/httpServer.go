@@ -1,6 +1,6 @@
 //go:build http
 
-package component
+package addons
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	. "github.com/srcfoundry/kinesis/component"
 )
 
 func init() {

@@ -8,6 +8,7 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/srcfoundry/kinesis"
+	_ "github.com/srcfoundry/kinesis/addons"
 	"github.com/srcfoundry/kinesis/component"
 )
 

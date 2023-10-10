@@ -21,23 +21,23 @@ var (
 	runOnce sync.Once
 	// the root container component
 	rootContainer *Container
-	// infra components intended to attach with root container. deferred until root container is initialized
-	infraComponents []Component
+	// add-on components intended to attach with root container. deferred until root container is initialized
+	addons []Component
 )
 
-// AttachComponent used for activating infrastructure components which attaches to the root container. infra components
-// could be optionally included by means of golang build tags.
-func AttachComponent(isHead bool, infraComponent Component) {
+// AttachComponent used for activating add-on components which attaches to the root container. Add-on components
+// could be optionally included by means of golang build tags. Refer 'addons' package for all available add-on components.
+func AttachComponent(isHead bool, addon Component) {
 	if rootContainer == nil {
 		if isHead {
-			infraComponents = append([]Component{infraComponent}, infraComponents...)
+			addons = append([]Component{addon}, addons...)
 		} else {
-			infraComponents = append(infraComponents, infraComponent)
+			addons = append(addons, addon)
 		}
 	} else {
-		err := rootContainer.Add(infraComponent)
+		err := rootContainer.Add(addon)
 		if err != nil {
-			log.Printf("failed to start %s, due to %s", infraComponent.GetName(), err)
+			log.Printf("failed to start %s, due to %s", addon.GetName(), err)
 			os.Exit(1)
 		}
 	}
@@ -157,19 +157,19 @@ func (c *Container) Add(comp Component) error {
 		return err
 	}
 
-	// the following is for root container to activate any deferred infra components that is yet to initialized
-	if rootContainer != nil && len(infraComponents) > 0 {
-		// copy over infra components to a new slice and mark original infraComponents as empty otherwise rootContainer.Add() would
-		// result in a recursive call within this condition, to add the infra component again, unless infraComponents is emptied.
-		infraComponentsCopy := make([]Component, len(infraComponents))
-		copy(infraComponentsCopy, infraComponents)
-		infraComponents = nil
+	// the following is for root container to activate any deferred add-on components that is yet to initialized
+	if rootContainer != nil && len(addons) > 0 {
+		// copy over addons to a new slice and mark original addons as empty otherwise rootContainer.Add() would
+		// result in a recursive call within this condition, to add the add-on component again, unless addons is emptied.
+		addonsCopy := make([]Component, len(addons))
+		copy(addonsCopy, addons)
+		addons = nil
 
-		for _, infraComp := range infraComponentsCopy {
-			log.Println("activating", infraComp)
-			err = rootContainer.Add(infraComp)
+		for _, addon := range addonsCopy {
+			log.Println("activating", addon)
+			err = rootContainer.Add(addon)
 			if err != nil {
-				log.Fatalf("failed to start %s, due to %s", infraComp, err)
+				log.Fatalf("failed to start %s, due to %s", addon, err)
 			}
 		}
 	}
