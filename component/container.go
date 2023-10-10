@@ -17,14 +17,45 @@ import (
 	"time"
 )
 
-var runOnce sync.Once
+var (
+	runOnce sync.Once
+	// the root container component
+	rootContainer *Container
+	// add-on components intended to attach with root container. deferred until root container is initialized
+	addons []Component
+)
+
+// AttachComponent used for activating add-on components which attaches to the root container. Add-on components
+// could be optionally included by means of golang build tags. Refer 'addons' package for all available add-on components.
+func AttachComponent(isHead bool, addon Component) {
+	if rootContainer == nil {
+		if isHead {
+			addons = append([]Component{addon}, addons...)
+		} else {
+			addons = append(addons, addon)
+		}
+	} else {
+		err := rootContainer.Add(addon)
+		if err != nil {
+			log.Printf("failed to start %s, due to %s", addon.GetName(), err)
+			os.Exit(1)
+		}
+	}
+}
 
 type Container struct {
 	SimpleComponent
 	signalCh chan os.Signal
 
 	// slice to maintain the order of components being added
-	components  []string
+	components []string
+
+	// channel maintained as a queue for adding & activating Components sequentially.
+	// Addition of components is made possible through a dedicated go routine which reads from compActivationQueue channel, thereby unblocking the caller to
+	// perform other activities like subscribing to state change notifications or just continuing with remaining execution.
+	compActivationQueue  chan Component
+	compActivationNotify chan error
+
 	cComponents map[string]cComponent
 	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
 }
@@ -74,35 +105,73 @@ func (c *Container) Add(comp Component) error {
 		return fmt.Errorf("Component name could not have same name as container")
 	}
 
-	// proceed to initialize component
-	err = c.componentLifecycleFSM(context.TODO(), comp)
+	if c.compActivationQueue == nil && c.GetStage() < Stopping {
+		c.compActivationQueue = make(chan Component, 1)
+		c.compActivationNotify = make(chan error)
+
+		// Even though components could be added asynchronously, it is activated sequentially since its being read off the compActivationQueue channel, thereby maintaining order.
+		go func(notifyActivation chan error) {
+			for nextComp := range c.compActivationQueue {
+
+				// proceed to initialize component
+				err = c.componentLifecycleFSM(context.TODO(), nextComp)
+				if err != nil {
+					log.Println(nextComp, "failed to activate due to", err.Error())
+					notifyActivation <- err
+					continue
+				}
+
+				cComm := cComponent{}
+				err = c.toCanonical(nextComp, &cComm)
+				if err != nil {
+					log.Println(comp, "failed to convert to canonical type due to", err.Error())
+					notifyActivation <- err
+					continue
+				}
+
+				if _, found := c.cComponents[nextComp.GetName()]; found {
+					err := fmt.Errorf("%v already activated", nextComp.GetName())
+					log.Println("failed to add component due to", err.Error())
+					notifyActivation <- err
+					continue
+				}
+				c.cComponents[nextComp.GetName()] = cComm
+				c.getMutatingLock().Lock()
+				c.components = append(c.components, nextComp.GetName())
+				c.getMutatingLock().Unlock()
+
+				// after successfull initilaization, proceed to start the component
+				err = c.componentLifecycleFSM(context.TODO(), nextComp)
+				if err != nil {
+					log.Println(nextComp, "failed to start due to", err.Error())
+					notifyActivation <- err
+					continue
+				}
+				notifyActivation <- nil
+			}
+		}(c.compActivationNotify)
+	}
+	c.compActivationQueue <- comp
+	err = <-c.compActivationNotify
 	if err != nil {
-		log.Println(comp, "failed to activate due to", err.Error())
 		return err
 	}
 
-	cComm := cComponent{}
-	err = c.toCanonical(comp, &cComm)
-	if err != nil {
-		log.Println(comp, "failed to convert to canonical type due to", err.Error())
-		return err
-	}
+	// the following is for root container to activate any deferred add-on components that is yet to initialized
+	if rootContainer != nil && len(addons) > 0 {
+		// copy over addons to a new slice and mark original addons as empty otherwise rootContainer.Add() would
+		// result in a recursive call within this condition, to add the add-on component again, unless addons is emptied.
+		addonsCopy := make([]Component, len(addons))
+		copy(addonsCopy, addons)
+		addons = nil
 
-	if _, found := c.cComponents[comp.GetName()]; found {
-		err := fmt.Errorf("%v already activated", comp.GetName())
-		log.Println("failed to add component due to", err.Error())
-		return err
-	}
-	c.cComponents[comp.GetName()] = cComm
-	c.getMutatingLock().Lock()
-	c.components = append(c.components, comp.GetName())
-	c.getMutatingLock().Unlock()
-
-	// after successfull initilaization, proceed to start the component
-	err = c.componentLifecycleFSM(context.TODO(), comp)
-	if err != nil {
-		log.Println(comp, "failed to start due to", err.Error())
-		return err
+		for _, addon := range addonsCopy {
+			log.Println("activating", addon)
+			err = rootContainer.Add(addon)
+			if err != nil {
+				log.Fatalf("failed to start %s, due to %s", addon, err)
+			}
+		}
 	}
 
 	return nil
@@ -318,6 +387,8 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	// assign reference of container to the component only if its not the current container being bootstrapped.
 	if !c.Matches(comp) {
 		comp.setContainer(c)
+	} else {
+		rootContainer = c
 	}
 
 	cComp.cName = comp.GetName()

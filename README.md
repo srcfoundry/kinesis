@@ -11,7 +11,7 @@ Each component gets to implement its own logic within each lifecycle stage, name
 
 Depending on the stimuli received, a component has the flexibility to alter its own state at any lifecycle stages, but at the same time is also subject to change by the encompassing container. For e.g just when a component is processing an event stimuli which causes the state to "Restart", the parent container would have received a system interrupt to shutdown all the components under it. So at any point in time, a component state is being determined by 2 or more separate goroutines which are concurrently being executed in different contexts.
 
-
+Add-on components such as an 'HTTP server' or 'Persistence' can be selectively included and activated by applying the appropriate Golang build tags during the build or 'go run' execution.
 <br/>
 
 ### Component design
@@ -22,6 +22,7 @@ The ```SimpleComponent``` type implements all the methods within a Component int
 ### Dynamic HTTP URI
 The framework dynamically creates HTTP URIs' for all exported methods within a component, which resemble an HTTP handler function ```func (w http.ResponseWriter, r *http.Request)```. At the time of initializing a component, HTTP URIs' are derived from the component type and added to a HTTP handler map, maintained within the parent container, for purpose of forwarding HTTP requests. Corresponding HTTP handler entries are removed in the event a component is being stopped and teared down. 
 
+To activate the HTTP server and expose components as HTTP endpoints, build or run with build tag ```-tags=http```
 <br/>
 
 ### A note on resiliency
@@ -30,7 +31,8 @@ The framework consists of a peculiar design consideration to always push a Golan
 <br/>
 
 ### Building and Running
-- ```go build cmd/kinesis.go```
+- ```available tags: http```
+- ```go build -tags=<comma separated build tags> cmd/kinesis.go```
 - ```./kinesis```
 - ```ctrl-c to quit```
 
