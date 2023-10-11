@@ -576,7 +576,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 	rootC := comp.GetContainer()
 	paths := []string{}
 	for rootC != nil {
-		paths = append(paths, rootC.GetName())
+		paths = append(paths, strings.ToLower(rootC.GetName()))
 		rootC = rootC.GetContainer()
 	}
 
@@ -586,7 +586,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 			cURI += paths[i] + "/"
 		}
 	}
-	cURI += comp.GetName()
+	cURI += strings.ToLower(comp.GetName())
 
 	cType := reflect.TypeOf(comp)
 	cTypeVal := reflect.ValueOf(comp)

@@ -25,13 +25,18 @@ The framework dynamically creates HTTP URIs' for all exported methods within a c
 To activate the HTTP server and expose components as HTTP endpoints, build or run with build tag ```-tags=http```
 <br/>
 
+### Persistence
+TODO
+
+<br/>
+
 ### A note on resiliency
 The framework consists of a peculiar design consideration to always push a Golang defer function to be executed within a separate goroutine, in the event a state function finishes execution. In order to acheive this, a state method would always start with a defer function being included first. The defer function always includes a call to the State Machine(SM), to decide which stage it needs to transition next. This level of resilience guarantees that the call to SM would get pushed to the call stack no matter if a component panics or errors out. In addition, the defer function is executed within a separate goroutine in order to avoid cyclic call, which otherwise could lead to a stack overflow.
 
 <br/>
 
 ### Building and Running
-- ```available tags: http```
+- ```available tags: http, simplefiledb```
 - ```go build -tags=<comma separated build tags> cmd/kinesis.go```
 - ```./kinesis```
 - ```ctrl-c to quit```
