@@ -3,12 +3,15 @@ package component
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"sync"
+	"time"
 )
 
 // Connection represents an interface for managing database connections.
 type Connection interface {
-	Connect(options ...interface{}) error
-	Disconnect(options ...interface{}) error
+	Connect(tx context.Context, options ...interface{}) error
+	Disconnect(tx context.Context, options ...interface{}) error
 }
 
 // RelationalDB represents the interface for a relational database.
@@ -32,7 +35,51 @@ type NoSQLDB interface {
 	// Add other NoSQL database methods as needed
 }
 
+var runOncePersistence sync.Once
+
 type Persistence struct {
 	SimpleComponent
 	DB Connection
+}
+
+// Init includes checks for singleton Persistence
+func (p *Persistence) Init(ctx context.Context) error {
+	isAlreadyStarted := make(chan bool, 2)
+	defer close(isAlreadyStarted)
+
+	var (
+		connErr    error
+		connCtx    context.Context
+		connCancel context.CancelFunc
+	)
+
+	runOncePersistence.Do(func() {
+		// indicate if initializing for the first time
+		isAlreadyStarted <- false
+		connCtx, connCancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer connCancel()
+
+		connErr = p.DB.Connect(connCtx)
+	})
+
+	isAlreadyStarted <- true
+
+	// check the first bool value written to the channel and return error if Persistence component had already been initialized.
+	if <-isAlreadyStarted {
+		return fmt.Errorf("error initializing %v since already attempted initialization", p.GetName())
+	}
+
+	// if starting for first time would have to drain the channel of remaining value before returning, to avoid memory leak
+	<-isAlreadyStarted
+
+	if connErr != nil {
+		return connErr
+	}
+
+	select {
+	case <-connCtx.Done():
+		return connCtx.Err()
+	default:
+		return nil
+	}
 }
