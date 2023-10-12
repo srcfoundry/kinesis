@@ -37,7 +37,7 @@ func AttachComponent(isHead bool, addon Component) {
 	} else {
 		err := rootContainer.Add(addon)
 		if err != nil {
-			log.Printf("failed to start %s, due to %s", addon.GetName(), err)
+			log.Printf("%s failed to start, due to %s", addon.GetName(), err)
 			os.Exit(1)
 		}
 	}
@@ -116,7 +116,7 @@ func (c *Container) Add(comp Component) error {
 				// proceed to initialize component
 				err = c.componentLifecycleFSM(context.TODO(), nextComp)
 				if err != nil {
-					log.Println(nextComp, "failed to activate due to", err.Error())
+					log.Println("failed to activate", nextComp)
 					notifyActivation <- err
 					continue
 				}
@@ -169,7 +169,7 @@ func (c *Container) Add(comp Component) error {
 			log.Println("activating", addon)
 			err = rootContainer.Add(addon)
 			if err != nil {
-				log.Fatalf("failed to start %s, due to %s", addon, err)
+				log.Fatalf("%s failed to start, due to error: %s", addon, err)
 			}
 		}
 	}

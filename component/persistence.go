@@ -10,8 +10,8 @@ import (
 
 // Connection represents an interface for managing database connections.
 type Connection interface {
-	Connect(tx context.Context, options ...interface{}) error
-	Disconnect(tx context.Context, options ...interface{}) error
+	Connect(ctx context.Context, options ...interface{}) error
+	Disconnect(ctx context.Context, options ...interface{}) error
 }
 
 // RelationalDB represents the interface for a relational database.
@@ -47,19 +47,9 @@ func (p *Persistence) Init(ctx context.Context) error {
 	isAlreadyStarted := make(chan bool, 2)
 	defer close(isAlreadyStarted)
 
-	var (
-		connErr    error
-		connCtx    context.Context
-		connCancel context.CancelFunc
-	)
-
 	runOncePersistence.Do(func() {
 		// indicate if initializing for the first time
 		isAlreadyStarted <- false
-		connCtx, connCancel = context.WithTimeout(context.Background(), 5*time.Second)
-		defer connCancel()
-
-		connErr = p.DB.Connect(connCtx)
 	})
 
 	isAlreadyStarted <- true
@@ -72,6 +62,10 @@ func (p *Persistence) Init(ctx context.Context) error {
 	// if starting for first time would have to drain the channel of remaining value before returning, to avoid memory leak
 	<-isAlreadyStarted
 
+	connCtx, connCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer connCancel()
+
+	connErr := p.DB.Connect(connCtx, nil)
 	if connErr != nil {
 		return connErr
 	}
