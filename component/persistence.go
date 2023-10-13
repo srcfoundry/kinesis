@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 	"time"
 )
@@ -65,7 +67,12 @@ func (p *Persistence) Init(ctx context.Context) error {
 	connCtx, connCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer connCancel()
 
-	connErr := p.DB.Connect(connCtx, nil)
+	dbConnStr := os.Getenv("KINESIS_DB_CONNECTION")
+	if len(dbConnStr) <= 0 {
+		log.Fatal("unable to read 'KINESIS_DB_CONNECTION' environment variable")
+	}
+
+	connErr := p.DB.Connect(connCtx, dbConnStr)
 	if connErr != nil {
 		return connErr
 	}
@@ -76,4 +83,8 @@ func (p *Persistence) Init(ctx context.Context) error {
 	default:
 		return nil
 	}
+}
+
+func (p *Persistence) Stop(ctx context.Context) error {
+	return p.DB.Disconnect(context.Background(), nil)
 }

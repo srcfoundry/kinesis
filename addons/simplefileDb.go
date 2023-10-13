@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	. "github.com/srcfoundry/kinesis/component"
 )
@@ -14,36 +15,31 @@ import (
 func init() {
 	persistence := new(Persistence)
 	persistence.Name = "simpleFileDB"
-	// connection string could also be read using env variable
-	dirname, err := os.UserHomeDir()
-	if err != nil {
-		log.Fatal("unable to determine user home directory", err)
-	}
-	persistence.DB = &SimpleFileDB{connString: "file://" + dirname + "/kinesisDB"}
+	persistence.DB = &SimpleFileDB{}
 	AttachComponent(true, persistence)
 }
 
 type SimpleFileDB struct {
-	db         *os.File
-	connString string
+	db *os.File
 }
 
 // if connString is not set, then expecting connection string formatted as file://<path to DB directory>
 // passed along as options
 func (s *SimpleFileDB) Connect(ctx context.Context, options ...interface{}) error {
-	if len(s.connString) <= 0 && len(options) <= 0 {
+	if len(options) <= 0 {
 		return fmt.Errorf("SimpleFileDB connString options missing")
 	}
 
-	if len(s.connString) <= 0 {
-		var found bool
-		s.connString, found = options[0].(string)
-		if !found {
-			return fmt.Errorf("unable to find SimpleFileDB connString")
-		}
+	connString, found := options[0].(string)
+	if !found {
+		return fmt.Errorf("unable to find SimpleFileDB connString")
 	}
 
-	dbPath := s.connString[len("file://"):]
+	if !strings.HasPrefix(connString, "file://") {
+		return fmt.Errorf("SimpleFileDB connString expected to start with 'file://'")
+	}
+
+	dbPath := connString[len("file://"):]
 	var err error
 	s.db, err = os.OpenFile(dbPath, os.O_RDWR, 0666)
 	if err != nil {
@@ -65,6 +61,10 @@ func (s *SimpleFileDB) Connect(ctx context.Context, options ...interface{}) erro
 	return nil
 }
 func (s *SimpleFileDB) Disconnect(ctx context.Context, options ...interface{}) error {
+	if s.db != nil {
+		log.Println("disconnecting SimpleFileDB at:", s.db.Name())
+		return s.db.Close()
+	}
 	return nil
 }
 func (s *SimpleFileDB) Insert(ctx context.Context, collection string, document interface{}, args ...interface{}) error {
