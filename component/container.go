@@ -1,7 +1,9 @@
 package component
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -58,6 +60,8 @@ type Container struct {
 
 	cComponents map[string]cComponent
 	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
+
+	persistence *Persistence
 }
 
 func (c *Container) Init(ctx context.Context) error {
@@ -147,6 +151,12 @@ func (c *Container) Add(comp Component) error {
 					notifyActivation <- err
 					continue
 				}
+
+				// register infra add-ons like Persistence within root container, for persisting components
+				if c == rootContainer {
+					c.registerAddon(nextComp)
+				}
+
 				notifyActivation <- nil
 			}
 		}(c.compActivationNotify)
@@ -175,6 +185,14 @@ func (c *Container) Add(comp Component) error {
 	}
 
 	return nil
+}
+
+// used for register infra add-ons like Persistence within root container, for persisting components
+func (c *Container) registerAddon(comp Component) {
+	switch addOn := comp.(type) {
+	case *Persistence:
+		c.persistence = addOn
+	}
 }
 
 // componentLifecycleFSM is a FSM for handling various stages of a component.
@@ -308,6 +326,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 				err = c.componentLifecycleFSM(msgCtx, comp)
 				if err != nil {
 					log.Println(comp, "failed to Stop, due to", err)
+					errCh <- err
 					continue
 				}
 				return
@@ -321,7 +340,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 					// validate if etag of the copy is current or not
 					if comp.GetEtag() != msgCompType.GetEtag() {
 						errCh <- errors.New("component copy is not current due to mismatched etag")
-						break
+						continue
 					}
 				}
 				goto forwardMessage
@@ -337,8 +356,58 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			handler = comp.getSyncMessageHandler(comp.GetName())
 		}
 		err = handler(msgCtx, msg)
+		if err != nil {
+			errCh <- err
+		}
+
+		// if persistence add-on is enabled, persist the resulting state of the component after message processing
+		if c.persistence != nil {
+			err = c.persist(msgCtx, comp)
+		}
 		errCh <- err
 	}
+}
+
+func (c *Container) persist(ctx context.Context, comp Component) error {
+	if c.persistence == nil {
+		return fmt.Errorf("%s does not have persistence add-on enabled", c)
+	}
+
+	pTypes := c.persistable(comp, c.persistence.GetSymmetricKey())
+	if len(pTypes) <= 0 {
+		log.Println("unable to find any persistable fields within", comp)
+		return nil
+	}
+
+	pTypesBytes, err := json.Marshal(pTypes)
+	if err != nil {
+		return fmt.Errorf("unable to convert PTypes to []byte while persisting, due to: %s", err)
+	}
+
+	// compare existing component type cache before persisting
+	if bytes.Equal(pTypesBytes, comp.getTypeCache()) {
+		log.Println("skipping persistence for", comp, "since found no change in typeCache")
+		return nil
+	}
+
+	if noSqlDB, isNoSqlDB := interface{}(c.persistence.DB).(NoSQLDB); isNoSqlDB {
+		return noSqlDB.Update(ctx, comp.GetName(), nil, pTypesBytes)
+	} else if relationalDB, isRelationalDB := interface{}(c.persistence.DB).(RelationalDB); isRelationalDB {
+		// todo for RelationalDB
+		_, err := relationalDB.Query(ctx, "TODO", nil)
+		return err
+	}
+
+	return fmt.Errorf("unable to determine persistence DB type for %s", c)
+}
+
+func (c *Container) persistable(comp Component, encryptKey string) PTypes {
+	cValue := reflect.ValueOf(comp)
+	v := reflect.Indirect(cValue)
+
+	pTypes := PTypes{}
+	determineType(encryptKey, v, v.Type().Name(), &pTypes)
+	return pTypes
 }
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {

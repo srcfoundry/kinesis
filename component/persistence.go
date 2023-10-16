@@ -2,13 +2,28 @@ package component
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"sync"
 	"time"
 )
+
+const persistableTag = "persistable"
+
+type PTypes []PType
+
+type PType struct {
+	Name          string      `json:"name"`
+	TypeHierarchy string      `json:"typeHierarchy"`
+	Value         interface{} `json:"value"`
+	IsEncrypted   bool        `json:"isEncrypted"`
+}
 
 // Connection represents an interface for managing database connections.
 type Connection interface {
@@ -41,7 +56,8 @@ var runOncePersistence sync.Once
 
 type Persistence struct {
 	SimpleComponent
-	DB Connection
+	DB                  Connection
+	symmetricEncryptKey interface{}
 }
 
 // Init includes checks for singleton Persistence
@@ -72,6 +88,13 @@ func (p *Persistence) Init(ctx context.Context) error {
 		log.Fatal("unable to read 'KINESIS_DB_CONNECTION' environment variable")
 	}
 
+	encryptKey := os.Getenv("KINESIS_DB_SYMMETRIC_ENCRYPT_KEY")
+	if len(encryptKey) <= 0 {
+		log.Fatal("unable to read 'KINESIS_DB_SYMMETRIC_ENCRYPT_KEY' environment variable")
+	}
+
+	p.symmetricEncryptKey = encryptKey
+
 	connErr := p.DB.Connect(connCtx, dbConnStr)
 	if connErr != nil {
 		return connErr
@@ -87,4 +110,96 @@ func (p *Persistence) Init(ctx context.Context) error {
 
 func (p *Persistence) Stop(ctx context.Context) error {
 	return p.DB.Disconnect(context.Background(), nil)
+}
+
+func (p *Persistence) GetSymmetricKey() string {
+	return p.symmetricEncryptKey.(string)
+}
+
+func determineType(encryptKey string, v reflect.Value, typeHierarchy string, pTypes *PTypes) {
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Type().Field(i)
+		value := v.Field(i)
+
+		// skipping embedded SimpleComponent field
+		if field.Type.Name() == "SimpleComponent" {
+			continue
+		}
+
+		var pType PType
+		strValue := fmt.Sprintf("%v", value)
+		isEncrypted := false
+
+		if field.Type.Kind() == reflect.Struct {
+			determineType(encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
+		} else if persistDirective, found := field.Tag.Lookup(persistableTag); found {
+			switch persistDirective {
+			case "encrypt":
+				if len(encryptKey) <= 0 {
+					log.Println("proceeding to persist", field.Type.Name(), "unencrypted, since encryptKey is missing")
+				} else {
+					encryptStr, err := encrypt(strValue, encryptKey)
+					if err != nil {
+						log.Println("proceeding to persist", field.Type.Name(), "unencrypted, since obtained error:", err, "while encrypting")
+					} else if len(encryptStr) > 0 {
+						isEncrypted = true
+						strValue = encryptStr
+					}
+				}
+			}
+		}
+		pType = PType{field.Name, typeHierarchy, strValue, isEncrypted}
+		*pTypes = append(*pTypes, pType)
+	}
+}
+
+func encrypt(plaintext, secretKey string) (string, error) {
+	aes, err := aes.NewCipher([]byte(secretKey))
+	if err != nil {
+		return plaintext, err
+	}
+
+	gcm, err := cipher.NewGCM(aes)
+	if err != nil {
+		return plaintext, err
+	}
+
+	// We need a 12-byte nonce for GCM (modifiable if you use cipher.NewGCMWithNonceSize())
+	// A nonce should always be randomly generated for every encryption.
+	nonce := make([]byte, gcm.NonceSize())
+	_, err = rand.Read(nonce)
+	if err != nil {
+		return plaintext, err
+	}
+
+	// ciphertext here is actually nonce+ciphertext
+	// So that when we decrypt, just knowing the nonce size
+	// is enough to separate it from the ciphertext.
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+
+	return string(ciphertext), nil
+}
+
+func decrypt(ciphertext, secretKey string) (string, error) {
+	aes, err := aes.NewCipher([]byte(secretKey))
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(aes)
+	if err != nil {
+		return "", err
+	}
+
+	// Since we know the ciphertext is actually nonce+ciphertext
+	// And len(nonce) == NonceSize(). We can separate the two.
+	nonceSize := gcm.NonceSize()
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+
+	plaintext, err := gcm.Open(nil, []byte(nonce), []byte(ciphertext), nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
 }
