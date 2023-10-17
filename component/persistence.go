@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -116,7 +117,7 @@ func (p *Persistence) GetSymmetricKey() string {
 	return p.symmetricEncryptKey.(string)
 }
 
-func determineType(encryptKey string, v reflect.Value, typeHierarchy string, pTypes *PTypes) {
+func marshalType(encryptKey string, v reflect.Value, typeHierarchy string, pTypes *PTypes) {
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Type().Field(i)
 		value := v.Field(i)
@@ -131,7 +132,7 @@ func determineType(encryptKey string, v reflect.Value, typeHierarchy string, pTy
 		isEncrypted := false
 
 		if field.Type.Kind() == reflect.Struct {
-			determineType(encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
+			marshalType(encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
 		} else if persistDirective, found := field.Tag.Lookup(persistableTag); found {
 			switch persistDirective {
 			case "encrypt":
@@ -147,10 +148,67 @@ func determineType(encryptKey string, v reflect.Value, typeHierarchy string, pTy
 					}
 				}
 			}
+			pType = PType{field.Name, typeHierarchy, strValue, isEncrypted}
+			*pTypes = append(*pTypes, pType)
 		}
-		pType = PType{field.Name, typeHierarchy, strValue, isEncrypted}
-		*pTypes = append(*pTypes, pType)
 	}
+}
+
+func unmarshalToType(encryptKey string, v reflect.Value, typeHierarchy string, pTypes map[string]PType) {
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Type().Field(i)
+		value := v.Field(i)
+
+		// skipping embedded SimpleComponent field
+		if field.Type.Name() == "SimpleComponent" {
+			continue
+		}
+
+		if field.Type.Kind() == reflect.Struct {
+			unmarshalToType(encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
+		} else if persistDirective, found := field.Tag.Lookup(persistableTag); found {
+			switch persistDirective {
+			case "native", "encrypt":
+				if pType, found := pTypes[field.Name]; found {
+					// check actual typeHierarchy matches with persisted typeHierarchy
+					if pType.TypeHierarchy != typeHierarchy {
+						log.Println("skipping unmarshalling", field.Name, "since actual typeHierarchy mismatches with persisted typeHierarchy")
+						continue
+					}
+
+					strValue := pType.Value.(string)
+
+					// if encountering a persisted field value which was encrypted, proceed to decrypt the same
+					if pType.IsEncrypted {
+						if len(encryptKey) <= 0 {
+							log.Println("proceeding with unmarshalling despite encryptKey for decrypting persistable field", field.Type.Name(), "is empty")
+						} else {
+							decryptStr, err := decrypt(encryptKey, strValue)
+							if err != nil {
+								log.Println("obtained error:", err, "while decrypting", field.Type.Name())
+							} else if len(decryptStr) > 0 {
+								strValue = decryptStr
+							}
+						}
+					}
+
+					switch value.Kind() {
+					// more reflect types here
+					case reflect.Bool:
+						b, _ := strconv.ParseBool(strValue)
+						value.SetBool(b)
+					case reflect.Int, reflect.Int16, reflect.Int8, reflect.Int32, reflect.Int64:
+						i, _ := strconv.Atoi(strValue)
+						value.SetInt(int64(i))
+					case reflect.String:
+						value.SetString(strValue)
+					}
+				}
+			} // end switch
+
+		} // end else if persistDirective
+
+	} // end for i := 0;
 }
 
 func encrypt(plaintext, secretKey string) (string, error) {

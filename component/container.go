@@ -198,7 +198,16 @@ func (c *Container) registerAddon(comp Component) {
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
 	comp.getMutatingLock().Lock()
-	defer comp.getMutatingLock().Unlock()
+	defer func() {
+		// persist persistable component fields to DB
+		if rootContainer != nil && rootContainer.persistence != nil {
+			err := rootContainer.persist(context.Background(), comp)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+		comp.getMutatingLock().Unlock()
+	}()
 
 	switch comp.GetStage() {
 	case Submitted:
@@ -220,6 +229,14 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Preinitialized:
 		comp.setStage(Initializing)
 		ctx := context.Background()
+
+		// load persistable fields from DB prior to initilization of component
+		if rootContainer != nil && rootContainer.persistence != nil {
+			err := rootContainer.load(context.Background(), comp)
+			if err != nil {
+				log.Println(err)
+			}
+		}
 
 		// TODO: test for init new component from within init of a component
 		err := comp.Init(ctx)
@@ -361,8 +378,8 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		}
 
 		// if persistence add-on is enabled, persist the resulting state of the component after message processing
-		if c.persistence != nil {
-			err = c.persist(msgCtx, comp)
+		if rootContainer.persistence != nil {
+			err = rootContainer.persist(msgCtx, comp)
 		}
 		errCh <- err
 	}
@@ -375,7 +392,7 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 
 	pTypes := c.persistable(comp, c.persistence.GetSymmetricKey())
 	if len(pTypes) <= 0 {
-		log.Println("unable to find any persistable fields within", comp)
+		//log.Println("unable to find any persistable fields within", comp)
 		return nil
 	}
 
@@ -390,10 +407,12 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 		return nil
 	}
 
+	comp.setTypeCache(pTypesBytes)
+
 	if noSqlDB, isNoSqlDB := interface{}(c.persistence.DB).(NoSQLDB); isNoSqlDB {
-		return noSqlDB.Update(ctx, comp.GetName(), nil, pTypesBytes)
+		return noSqlDB.Update(ctx, comp.GetName(), nil, pTypes)
 	} else if relationalDB, isRelationalDB := interface{}(c.persistence.DB).(RelationalDB); isRelationalDB {
-		// todo for RelationalDB
+		// implement for RelationalDB here
 		_, err := relationalDB.Query(ctx, "TODO", nil)
 		return err
 	}
@@ -401,12 +420,46 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 	return fmt.Errorf("unable to determine persistence DB type for %s", c)
 }
 
+func (c *Container) load(ctx context.Context, comp Component) error {
+	if c.persistence == nil {
+		return fmt.Errorf("%s does not have persistence add-on enabled", c)
+	}
+
+	var pTypes PTypes
+
+	if noSqlDB, isNoSqlDB := interface{}(c.persistence.DB).(NoSQLDB); isNoSqlDB {
+		err := noSqlDB.FindOne(ctx, comp.GetName(), nil, &pTypes, nil)
+		if err != nil {
+			return err
+		}
+	} else if relationalDB, isRelationalDB := interface{}(c.persistence.DB).(RelationalDB); isRelationalDB {
+		// implement for RelationalDB here
+		_, _ = relationalDB.Query(ctx, "TODO", nil)
+	}
+
+	if len(pTypes) <= 0 {
+		log.Println("unable to load any persistable fields for", comp)
+		return nil
+	}
+
+	pTypeMap := make(map[string]PType, len(pTypes))
+	for _, pType := range pTypes {
+		pTypeMap[pType.Name] = pType
+	}
+
+	cValue := reflect.ValueOf(comp)
+	actualValue := reflect.Indirect(cValue)
+
+	unmarshalToType(c.persistence.GetSymmetricKey(), actualValue, actualValue.Type().Name(), pTypeMap)
+	return nil
+}
+
 func (c *Container) persistable(comp Component, encryptKey string) PTypes {
 	cValue := reflect.ValueOf(comp)
 	v := reflect.Indirect(cValue)
 
 	pTypes := PTypes{}
-	determineType(encryptKey, v, v.Type().Name(), &pTypes)
+	marshalType(encryptKey, v, v.Type().Name(), &pTypes)
 	return pTypes
 }
 

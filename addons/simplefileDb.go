@@ -4,6 +4,7 @@ package addons
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -41,11 +42,11 @@ func (s *SimpleFileDB) Connect(ctx context.Context, options ...interface{}) erro
 
 	dbPath := connString[len("file://"):]
 	var err error
-	s.db, err = os.OpenFile(dbPath, os.O_RDWR, 0666)
+	s.db, err = os.OpenFile(dbPath, os.O_RDWR, 0777)
 	if err != nil {
 		if os.IsNotExist(err) {
 			log.Println("creating SimpleFileDB at", dbPath)
-			err = os.MkdirAll(dbPath, 0666)
+			err = os.MkdirAll(dbPath, 0777)
 			if err != nil {
 				log.Println(err, "error creating SimpleFileDB:", dbPath)
 				return err
@@ -71,12 +72,51 @@ func (s *SimpleFileDB) Insert(ctx context.Context, collection string, document i
 	return nil
 }
 func (s *SimpleFileDB) Update(ctx context.Context, collection string, filter interface{}, update interface{}, args ...interface{}) error {
+	payload, err := json.Marshal(update)
+	if err != nil {
+		return err
+	}
+
+	collFilePath := s.db.Name() + string(os.PathSeparator) + collection
+	collFile, err := os.Create(collFilePath)
+	if err != nil {
+		log.Println("obtained following error:", err, "creating SimpleFileDB collection file", collFilePath)
+		return err
+	}
+	defer collFile.Close()
+
+	_, err = collFile.Write(payload)
+	if err != nil {
+		log.Println("obtained following error:", err, "writing to SimpleFileDB collection file", collFilePath)
+		return err
+	}
+
 	return nil
 }
 func (s *SimpleFileDB) Delete(ctx context.Context, collection string, filter interface{}, args ...interface{}) error {
 	return nil
 }
 func (s *SimpleFileDB) FindOne(ctx context.Context, collection string, filter interface{}, result interface{}, args ...interface{}) error {
+	collFilePath := s.db.Name() + string(os.PathSeparator) + collection
+
+	// proceed to read only if collection file exists
+	_, err := os.Stat(collFilePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	bytes, err := os.ReadFile(collFilePath)
+	if err != nil {
+		log.Println("obtained following error:", err, "reading from SimpleFileDB collection file", collFilePath)
+		return err
+	}
+
+	err = json.Unmarshal(bytes, args[0])
+	if err != nil {
+		log.Println("obtained following error:", err, "while unmarshalling from SimpleFileDB collection file", collFilePath)
+		return err
+	}
+
 	return nil
 }
 func (s *SimpleFileDB) Find(ctx context.Context, collection string, filter interface{}, args ...interface{}) ([]interface{}, error) {
