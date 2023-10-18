@@ -278,7 +278,6 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		default:
 			return nil
 		}
-		fallthrough
 	case Stopping:
 		err := comp.Stop(ctx)
 		if err != nil {
@@ -340,11 +339,15 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			switch msg {
 			//additional control handling cases goes here
 			case Shutdown:
-				err = c.componentLifecycleFSM(msgCtx, comp)
-				if err != nil {
-					log.Println(comp, "failed to Stop, due to", err)
-					errCh <- err
-					continue
+				_ = c.componentLifecycleFSM(msgCtx, comp)
+				// once component stage is stopping, invoke componentLifecycleFSM again to actually stop the component
+				if comp.GetStage() == Stopping {
+					err = c.componentLifecycleFSM(msgCtx, comp)
+					if err != nil {
+						log.Println(comp, "failed to Stop, due to", err)
+						errCh <- err
+						continue
+					}
 				}
 				return
 			}
@@ -378,7 +381,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		}
 
 		// if persistence add-on is enabled, persist the resulting state of the component after message processing
-		if rootContainer.persistence != nil {
+		if rootContainer != nil && rootContainer.persistence != nil {
 			err = rootContainer.persist(msgCtx, comp)
 		}
 		errCh <- err
@@ -403,7 +406,6 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 
 	// compare existing component type cache before persisting
 	if bytes.Equal(pTypesBytes, comp.getTypeCache()) {
-		log.Println("skipping persistence for", comp, "since found no change in typeCache")
 		return nil
 	}
 
