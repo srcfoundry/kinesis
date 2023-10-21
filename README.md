@@ -57,8 +57,8 @@ The framework consists of a peculiar design consideration to always push a Golan
 Usage: ```go build [add-on options] cmd/kinesis.go```
 
 Add-on options:
-- ```  http :                 HTTP add-on which starts an http server on port 8080 and exposes components as REST objects```
-- ```  simplefiledb :         Persistence enabled using Simple file based NoSQL Database```
+- ```http :                 HTTP add-on which starts an http server on port 8080 and exposes components as REST objects```
+- ```simplefiledb :         Persistence enabled using Simple file based NoSQL Database```
 
 e.g.,  ```go build -tags=http,simplefiledb cmd/kinesis.go ```
 
@@ -68,9 +68,9 @@ e.g.,  ```go build -tags=http,simplefiledb cmd/kinesis.go ```
 Usage: ```env [environment variables] ./kinesis```
 
 environment variables options:
-- ```  KINESIS_DB_CONNECTION :                Database connection string if any of the Persistence build tags are used```
-- ```  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY :    Encryption key to encrypt appropriately tagged component fields while persisting to database ```
-- ```  ctrl-c to quit```
+- ```KINESIS_DB_CONNECTION :                Database connection string if any of the Persistence build tags are used```
+- ```KINESIS_DB_SYMMETRIC_ENCRYPT_KEY :    Encryption key to encrypt appropriately tagged component fields while persisting to database ```
+- ```ctrl-c to quit```
 
 e.g.,  ```env KINESIS_DB_CONNECTION=file:///opt/database/kinesisDB  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY=68gjh658jhg8tf ./kinesis```
 
