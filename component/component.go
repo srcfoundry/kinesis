@@ -153,6 +153,9 @@ type Component interface {
 	setEtag(string)
 	GetEtag() string
 
+	setTypeCache([]byte)
+	getTypeCache() []byte
+
 	fmt.Stringer
 	http.Handler
 
@@ -163,6 +166,8 @@ type Component interface {
 type SimpleComponent struct {
 	Etag string `json:"etag" hash:"ignore"`
 	hash uint64
+	// type cache maintained for persistence
+	typeCache []byte
 
 	Name            string `json:"name"`
 	uri             string
@@ -201,6 +206,14 @@ func (d *SimpleComponent) setURI(uri string) {
 
 func (d *SimpleComponent) GetURI() string {
 	return d.uri
+}
+
+func (d *SimpleComponent) setTypeCache(typeCache []byte) {
+	d.typeCache = typeCache
+}
+
+func (d *SimpleComponent) getTypeCache() []byte {
+	return d.typeCache
 }
 
 func (d *SimpleComponent) preInit() {
@@ -319,10 +332,6 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
-	if d.Stage > Started {
-		return fmt.Errorf("unable to subscribe since %v is %v", d.GetName(), d.Stage)
-	}
-
 	if d.subscribers == nil {
 		d.subscribers = make(map[string]chan<- interface{})
 	}

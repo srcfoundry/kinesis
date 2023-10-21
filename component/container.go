@@ -1,7 +1,9 @@
 package component
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -12,17 +14,57 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
 
+func init() {
+	rootContainer = new(Container)
+	rootContainer.Name = "root"
+	//topLevelComponents = append(topLevelComponents, rootContainer)
+	AttachComponent(true, rootContainer)
+
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		osSignal := <-signalCh
+		log.Println(rootContainer, "received", osSignal)
+
+		signal.Stop(signalCh)
+		close(signalCh)
+		signalCh = nil
+
+		subscribe := make(chan interface{}, 1)
+		defer close(subscribe)
+		rootContainer.Subscribe("root.init", subscribe)
+
+		// proceed to shutdown top level components (including root container) if system interrupt is received.
+		for i := len(topLevelComponents) - 1; i >= 0; i-- {
+			nxtTopLvlComp := topLevelComponents[i]
+			log.Println("proceed to shutdown", nxtTopLvlComp)
+			err := nxtTopLvlComp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
+			if err == nil {
+				log.Println("Shutdown notification was successfully sent to", nxtTopLvlComp)
+			}
+		}
+
+		for notification := range subscribe {
+			if notification == Stopped {
+				log.Println("Exiting")
+				os.Exit(0)
+			}
+		}
+	}()
+}
+
 var (
-	runOnce sync.Once
 	// the root container component
 	rootContainer *Container
 	// add-on components intended to attach with root container. deferred until root container is initialized
 	addons []Component
+	// components (including containers) which dont have an explicit parent container are included as top level components
+	topLevelComponents []Component
 )
 
 // AttachComponent used for activating add-on components which attaches to the root container. Add-on components
@@ -37,7 +79,7 @@ func AttachComponent(isHead bool, addon Component) {
 	} else {
 		err := rootContainer.Add(addon)
 		if err != nil {
-			log.Printf("failed to start %s, due to %s", addon.GetName(), err)
+			log.Printf("%s failed to start, due to %s", addon.GetName(), err)
 			os.Exit(1)
 		}
 	}
@@ -45,7 +87,6 @@ func AttachComponent(isHead bool, addon Component) {
 
 type Container struct {
 	SimpleComponent
-	signalCh chan os.Signal
 
 	// slice to maintain the order of components being added
 	components []string
@@ -58,40 +99,14 @@ type Container struct {
 
 	cComponents map[string]cComponent
 	cHandlers   map[string]func(http.ResponseWriter, *http.Request)
+
+	persistence *Persistence
 }
 
 func (c *Container) Init(ctx context.Context) error {
 	c.cComponents = make(map[string]cComponent)
 	c.cHandlers = make(map[string]func(http.ResponseWriter, *http.Request))
-
-	runOnce.Do(func() {
-		c.signalCh = make(chan os.Signal, 1)
-		signal.Notify(c.signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-	})
 	return nil
-}
-
-func (c *Container) Start(ctx context.Context) error {
-	for {
-		select {
-		// proceed to shutdown container if system interrupt is received.
-		case osSignal, ok := <-c.signalCh:
-			if !ok {
-				log.Println("signalCh closed for", c.GetName())
-				return nil
-			}
-
-			log.Println(c.GetName(), "received", osSignal)
-
-			log.Println("proceed to shutdown", c.GetName())
-			err := c.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
-			if err == nil {
-				log.Println("Shutdown notification was successfully sent to", c.GetName())
-				return nil
-			}
-		case <-c.inbox:
-		}
-	}
 }
 
 func (c *Container) Add(comp Component) error {
@@ -116,7 +131,7 @@ func (c *Container) Add(comp Component) error {
 				// proceed to initialize component
 				err = c.componentLifecycleFSM(context.TODO(), nextComp)
 				if err != nil {
-					log.Println(nextComp, "failed to activate due to", err.Error())
+					log.Println("failed to activate", nextComp)
 					notifyActivation <- err
 					continue
 				}
@@ -147,6 +162,12 @@ func (c *Container) Add(comp Component) error {
 					notifyActivation <- err
 					continue
 				}
+
+				// register infra add-ons like Persistence within root container, for persisting components
+				if c == rootContainer {
+					c.registerAddon(nextComp)
+				}
+
 				notifyActivation <- nil
 			}
 		}(c.compActivationNotify)
@@ -169,7 +190,7 @@ func (c *Container) Add(comp Component) error {
 			log.Println("activating", addon)
 			err = rootContainer.Add(addon)
 			if err != nil {
-				log.Fatalf("failed to start %s, due to %s", addon, err)
+				log.Fatalf("%s failed to start, due to error: %s", addon, err)
 			}
 		}
 	}
@@ -177,10 +198,27 @@ func (c *Container) Add(comp Component) error {
 	return nil
 }
 
+// used for register infra add-ons like Persistence within root container, for persisting components
+func (c *Container) registerAddon(comp Component) {
+	switch addOn := comp.(type) {
+	case *Persistence:
+		c.persistence = addOn
+	}
+}
+
 // componentLifecycleFSM is a FSM for handling various stages of a component.
 func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) error {
 	comp.getMutatingLock().Lock()
-	defer comp.getMutatingLock().Unlock()
+	defer func() {
+		// persist persistable component fields to DB
+		if rootContainer != nil && rootContainer.persistence != nil {
+			err := rootContainer.persist(context.Background(), comp)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+		comp.getMutatingLock().Unlock()
+	}()
 
 	switch comp.GetStage() {
 	case Submitted:
@@ -202,6 +240,14 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Preinitialized:
 		comp.setStage(Initializing)
 		ctx := context.Background()
+
+		// load persistable fields from DB prior to initilization of component
+		if rootContainer != nil && rootContainer.persistence != nil {
+			err := rootContainer.load(context.Background(), comp)
+			if err != nil {
+				log.Println(err)
+			}
+		}
 
 		// TODO: test for init new component from within init of a component
 		err := comp.Init(ctx)
@@ -243,7 +289,6 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		default:
 			return nil
 		}
-		fallthrough
 	case Stopping:
 		err := comp.Stop(ctx)
 		if err != nil {
@@ -305,10 +350,15 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			switch msg {
 			//additional control handling cases goes here
 			case Shutdown:
-				err = c.componentLifecycleFSM(msgCtx, comp)
-				if err != nil {
-					log.Println(comp, "failed to Stop, due to", err)
-					continue
+				_ = c.componentLifecycleFSM(msgCtx, comp)
+				// once component stage is stopping, invoke componentLifecycleFSM again to actually stop the component
+				if comp.GetStage() == Stopping {
+					err = c.componentLifecycleFSM(msgCtx, comp)
+					if err != nil {
+						log.Println(comp, "failed to Stop, due to", err)
+						errCh <- err
+						continue
+					}
 				}
 				return
 			}
@@ -321,7 +371,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 					// validate if etag of the copy is current or not
 					if comp.GetEtag() != msgCompType.GetEtag() {
 						errCh <- errors.New("component copy is not current due to mismatched etag")
-						break
+						continue
 					}
 				}
 				goto forwardMessage
@@ -337,8 +387,93 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 			handler = comp.getSyncMessageHandler(comp.GetName())
 		}
 		err = handler(msgCtx, msg)
+		if err != nil {
+			errCh <- err
+		}
+
+		// if persistence add-on is enabled, persist the resulting state of the component after message processing
+		if rootContainer != nil && rootContainer.persistence != nil {
+			err = rootContainer.persist(msgCtx, comp)
+		}
 		errCh <- err
 	}
+}
+
+func (c *Container) persist(ctx context.Context, comp Component) error {
+	if c.persistence == nil {
+		return fmt.Errorf("%s does not have persistence add-on enabled", c)
+	}
+
+	pTypes := c.persistable(comp, c.persistence.GetSymmetricKey())
+	if len(pTypes) <= 0 {
+		//log.Println("unable to find any persistable fields within", comp)
+		return nil
+	}
+
+	pTypesBytes, err := json.Marshal(pTypes)
+	if err != nil {
+		return fmt.Errorf("unable to convert PTypes to []byte while persisting, due to: %s", err)
+	}
+
+	// compare existing component type cache before persisting
+	if bytes.Equal(pTypesBytes, comp.getTypeCache()) {
+		return nil
+	}
+
+	comp.setTypeCache(pTypesBytes)
+
+	if noSqlDB, isNoSqlDB := interface{}(c.persistence.DB).(NoSQLDB); isNoSqlDB {
+		return noSqlDB.Update(ctx, comp.GetName(), nil, pTypes)
+	} else if relationalDB, isRelationalDB := interface{}(c.persistence.DB).(RelationalDB); isRelationalDB {
+		// implement for RelationalDB here
+		_, err := relationalDB.Query(ctx, "TODO", nil)
+		return err
+	}
+
+	return fmt.Errorf("unable to determine persistence DB type for %s", c)
+}
+
+func (c *Container) load(ctx context.Context, comp Component) error {
+	if c.persistence == nil {
+		return fmt.Errorf("%s does not have persistence add-on enabled", c)
+	}
+
+	var pTypes PTypes
+
+	if noSqlDB, isNoSqlDB := interface{}(c.persistence.DB).(NoSQLDB); isNoSqlDB {
+		err := noSqlDB.FindOne(ctx, comp.GetName(), nil, &pTypes, nil)
+		if err != nil {
+			return err
+		}
+	} else if relationalDB, isRelationalDB := interface{}(c.persistence.DB).(RelationalDB); isRelationalDB {
+		// implement for RelationalDB here
+		_, _ = relationalDB.Query(ctx, "TODO", nil)
+	}
+
+	if len(pTypes) <= 0 {
+		log.Println("unable to load any persistable fields for", comp)
+		return nil
+	}
+
+	pTypeMap := make(map[string]PType, len(pTypes))
+	for _, pType := range pTypes {
+		pTypeMap[pType.Name] = pType
+	}
+
+	cValue := reflect.ValueOf(comp)
+	actualValue := reflect.Indirect(cValue)
+
+	unmarshalToType(c.persistence.GetSymmetricKey(), actualValue, actualValue.Type().Name(), pTypeMap)
+	return nil
+}
+
+func (c *Container) persistable(comp Component, encryptKey string) PTypes {
+	cValue := reflect.ValueOf(comp)
+	v := reflect.Indirect(cValue)
+
+	pTypes := PTypes{}
+	marshalType(encryptKey, v, v.Type().Name(), &pTypes)
+	return pTypes
 }
 
 func (c *Container) startComponent(ctx context.Context, comp Component) {
@@ -384,11 +519,10 @@ func (c *Container) Matches(comp Component) bool {
 
 // toCanonical enhances the component and assigns it to the passed cComponent type
 func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
-	// assign reference of container to the component only if its not the current container being bootstrapped.
 	if !c.Matches(comp) {
 		comp.setContainer(c)
 	} else {
-		rootContainer = c
+		topLevelComponents = append(topLevelComponents, comp)
 	}
 
 	cComp.cName = comp.GetName()
@@ -443,14 +577,6 @@ func (c *Container) Stop(ctx context.Context) error {
 
 		last = len(c.components) - 1
 	}
-
-	defer func() {
-		if c.signalCh != nil {
-			signal.Stop(c.signalCh)
-			close(c.signalCh)
-			c.signalCh = nil
-		}
-	}()
 
 	return nil
 }
@@ -576,7 +702,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 	rootC := comp.GetContainer()
 	paths := []string{}
 	for rootC != nil {
-		paths = append(paths, rootC.GetName())
+		paths = append(paths, strings.ToLower(rootC.GetName()))
 		rootC = rootC.GetContainer()
 	}
 
@@ -586,7 +712,7 @@ func deriveHttpHandlers(comp Component) map[string]func(w http.ResponseWriter, r
 			cURI += paths[i] + "/"
 		}
 	}
-	cURI += comp.GetName()
+	cURI += strings.ToLower(comp.GetName())
 
 	cType := reflect.TypeOf(comp)
 	cTypeVal := reflect.ValueOf(comp)

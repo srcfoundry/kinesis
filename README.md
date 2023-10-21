@@ -25,15 +25,53 @@ The framework dynamically creates HTTP URIs' for all exported methods within a c
 To activate the HTTP server and expose components as HTTP endpoints, build or run with build tag ```-tags=http```
 <br/>
 
+### Persistence
+Persisting data can be achieved by incorporating Relational or NoSQL database functionality as an add-on, facilitated through the use of appropriate build tags. Support for popular Relational (e.g. MySql, Postgres) & NoSQL (e.g. elasticsearch, MongoDB) databases could be added by implementing common Database methods defined within ```component``` package. Kinesis includes a simple file based NoSQL ```simplefileDb``` database, which can be enabled using the build tag ```-tags=simplefiledb```. 
+
+Component fields' tagged with ```persistable:"native"``` will be automatically stored in the database whenever a component undergoes a stage change or processes a message. 
+
+e.g. of using ```persistable:"native"``` field tag within "App" component.
+
+```
+type App struct {
+	component.Container
+	PreviousExecutions   int    `persistable:"native"`
+	LastExecutedDateTime string `persistable:"native"`
+    ApiKey               string `persistable:"encrypt"`
+}
+```
+
+Sensitive component fields' tagged with ```persistable:"encrypt"``` would be stored encrypted in the DB with the help of a symmetric encryption key supplied using the ```KINESIS_DB_SYMMETRIC_ENCRYPT_KEY``` environment variable. The database connection string should be supplied through the ```KINESIS_DB_CONNECTION``` environment variable. Connection string should be prefixed by the connection type prefix, viz., file://, mongodb://, https:// etc., corresponding to the Database being used for persistence.
+
+
+e.g. while using -tags=simplefiledb use environment variable KINESIS_DB_CONNECTION=file:///var/opt/kinesisDB  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY=68gjh658jhg8tf
+
+<br/>
+
 ### A note on resiliency
 The framework consists of a peculiar design consideration to always push a Golang defer function to be executed within a separate goroutine, in the event a state function finishes execution. In order to acheive this, a state method would always start with a defer function being included first. The defer function always includes a call to the State Machine(SM), to decide which stage it needs to transition next. This level of resilience guarantees that the call to SM would get pushed to the call stack no matter if a component panics or errors out. In addition, the defer function is executed within a separate goroutine in order to avoid cyclic call, which otherwise could lead to a stack overflow.
 
 <br/>
 
-### Building and Running
-- ```available tags: http```
-- ```go build -tags=<comma separated build tags> cmd/kinesis.go```
-- ```./kinesis```
-- ```ctrl-c to quit```
+### Building
+Usage: ```go build [add-on options] cmd/kinesis.go```
+
+Add-on options:
+- ```  http :                 HTTP add-on which starts an http server on port 8080 and exposes components as REST objects```
+- ```  simplefiledb :         Persistence enabled using Simple file based NoSQL Database```
+
+e.g.,  ```go build -tags=http,simplefiledb cmd/kinesis.go ```
+
+<br/>
+
+### Running
+Usage: ```env [environment variables] ./kinesis```
+
+environment variables options:
+- ```  KINESIS_DB_CONNECTION :                Database connection string if any of the Persistence build tags are used```
+- ```  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY :    Encryption key to encrypt appropriately tagged component fields while persisting to database ```
+- ```  ctrl-c to quit```
+
+e.g.,  ```env KINESIS_DB_CONNECTION=file:///opt/database/kinesisDB  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY=68gjh658jhg8tf ./kinesis```
 
 <br/>

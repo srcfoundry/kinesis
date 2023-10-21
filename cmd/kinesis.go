@@ -9,7 +9,6 @@ import (
 
 	"github.com/srcfoundry/kinesis"
 	_ "github.com/srcfoundry/kinesis/addons"
-	"github.com/srcfoundry/kinesis/component"
 )
 
 func init() {
@@ -27,14 +26,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	subscribe := make(chan interface{}, 1)
-	defer close(subscribe)
-	app.Subscribe("main.subscriber", subscribe)
-
-	for notification := range subscribe {
-		if notification == component.Stopped {
-			log.Println("Exiting")
-			os.Exit(0)
-		}
-	}
+	select {}
 }
