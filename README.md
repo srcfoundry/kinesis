@@ -37,7 +37,7 @@ type App struct {
 	component.Container
 	PreviousExecutions   int    `persistable:"native"`
 	LastExecutedDateTime string `persistable:"native"`
-    ApiKey               string `persistable:"encrypt"`
+	ApiKey               string `persistable:"encrypt"`
 }
 ```
 
