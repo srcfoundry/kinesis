@@ -36,7 +36,11 @@ The framework consists of a peculiar design consideration to always push a Golan
 <br/>
 
 ### Building and Running
+<<<<<<< HEAD
 - ```available tags: http, simplefiledb```
+=======
+- ```available tags: http```
+>>>>>>> origin/main
 - ```go build -tags=<comma separated build tags> cmd/kinesis.go```
 - ```./kinesis```
 - ```ctrl-c to quit```
