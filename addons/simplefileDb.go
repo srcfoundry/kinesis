@@ -17,7 +17,7 @@ func init() {
 	persistence := new(Persistence)
 	persistence.Name = "simpleFileDB"
 	persistence.DB = &SimpleFileDB{}
-	AttachComponent(true, persistence)
+	AttachComponent(false, persistence)
 }
 
 type SimpleFileDB struct {
@@ -111,7 +111,7 @@ func (s *SimpleFileDB) FindOne(ctx context.Context, collection string, filter in
 		return err
 	}
 
-	err = json.Unmarshal(bytes, args[0])
+	err = json.Unmarshal(bytes, result)
 	if err != nil {
 		log.Println("obtained following error:", err, "while unmarshalling from SimpleFileDB collection file", collFilePath)
 		return err

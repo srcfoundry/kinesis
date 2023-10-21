@@ -332,10 +332,6 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 }
 
 func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
-	if d.Stage > Started {
-		return fmt.Errorf("unable to subscribe since %v is %v", d.GetName(), d.Stage)
-	}
-
 	if d.subscribers == nil {
 		d.subscribers = make(map[string]chan<- interface{})
 	}

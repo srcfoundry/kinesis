@@ -14,17 +14,57 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
 
+func init() {
+	rootContainer = new(Container)
+	rootContainer.Name = "root"
+	//topLevelComponents = append(topLevelComponents, rootContainer)
+	AttachComponent(true, rootContainer)
+
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		osSignal := <-signalCh
+		log.Println(rootContainer, "received", osSignal)
+
+		signal.Stop(signalCh)
+		close(signalCh)
+		signalCh = nil
+
+		subscribe := make(chan interface{}, 1)
+		defer close(subscribe)
+		rootContainer.Subscribe("root.init", subscribe)
+
+		// proceed to shutdown top level components (including root container) if system interrupt is received.
+		for i := len(topLevelComponents) - 1; i >= 0; i-- {
+			nxtTopLvlComp := topLevelComponents[i]
+			log.Println("proceed to shutdown", nxtTopLvlComp)
+			err := nxtTopLvlComp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
+			if err == nil {
+				log.Println("Shutdown notification was successfully sent to", nxtTopLvlComp)
+			}
+		}
+
+		for notification := range subscribe {
+			if notification == Stopped {
+				log.Println("Exiting")
+				os.Exit(0)
+			}
+		}
+	}()
+}
+
 var (
-	runOnce sync.Once
 	// the root container component
 	rootContainer *Container
 	// add-on components intended to attach with root container. deferred until root container is initialized
 	addons []Component
+	// components (including containers) which dont have an explicit parent container are included as top level components
+	topLevelComponents []Component
 )
 
 // AttachComponent used for activating add-on components which attaches to the root container. Add-on components
@@ -47,7 +87,6 @@ func AttachComponent(isHead bool, addon Component) {
 
 type Container struct {
 	SimpleComponent
-	signalCh chan os.Signal
 
 	// slice to maintain the order of components being added
 	components []string
@@ -67,35 +106,7 @@ type Container struct {
 func (c *Container) Init(ctx context.Context) error {
 	c.cComponents = make(map[string]cComponent)
 	c.cHandlers = make(map[string]func(http.ResponseWriter, *http.Request))
-
-	runOnce.Do(func() {
-		c.signalCh = make(chan os.Signal, 1)
-		signal.Notify(c.signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
-	})
 	return nil
-}
-
-func (c *Container) Start(ctx context.Context) error {
-	for {
-		select {
-		// proceed to shutdown container if system interrupt is received.
-		case osSignal, ok := <-c.signalCh:
-			if !ok {
-				log.Println("signalCh closed for", c.GetName())
-				return nil
-			}
-
-			log.Println(c.GetName(), "received", osSignal)
-
-			log.Println("proceed to shutdown", c.GetName())
-			err := c.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
-			if err == nil {
-				log.Println("Shutdown notification was successfully sent to", c.GetName())
-				return nil
-			}
-		case <-c.inbox:
-		}
-	}
 }
 
 func (c *Container) Add(comp Component) error {
@@ -508,11 +519,10 @@ func (c *Container) Matches(comp Component) bool {
 
 // toCanonical enhances the component and assigns it to the passed cComponent type
 func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
-	// assign reference of container to the component only if its not the current container being bootstrapped.
 	if !c.Matches(comp) {
 		comp.setContainer(c)
 	} else {
-		rootContainer = c
+		topLevelComponents = append(topLevelComponents, comp)
 	}
 
 	cComp.cName = comp.GetName()
@@ -567,14 +577,6 @@ func (c *Container) Stop(ctx context.Context) error {
 
 		last = len(c.components) - 1
 	}
-
-	defer func() {
-		if c.signalCh != nil {
-			signal.Stop(c.signalCh)
-			close(c.signalCh)
-			c.signalCh = nil
-		}
-	}()
 
 	return nil
 }

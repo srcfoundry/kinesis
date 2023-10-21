@@ -20,7 +20,7 @@ func (a *App) PostInit(context.Context) error {
 	}
 	log.Printf("%s last executed on: %s\n", a, a.LastExecutedDateTime)
 	log.Printf("Number of times %s executed: %v\n", a, a.PreviousExecutions)
-	a.LastExecutedDateTime = time.Now().Format("January 02, 2006")
+	a.LastExecutedDateTime = time.Now().Format("January 02, 2006 15:04:05 PM")
 	a.PreviousExecutions++
 	return nil
 }
