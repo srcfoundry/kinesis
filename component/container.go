@@ -451,7 +451,6 @@ func (c *Container) load(ctx context.Context, comp Component) error {
 	}
 
 	if len(pTypes) <= 0 {
-		log.Println("unable to load any persistable fields for", comp)
 		return nil
 	}
 
@@ -487,7 +486,6 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		}
 		isRestartable, delay := comp.IsRestartableWithDelay()
 		if !isRestartable {
-			log.Println(comp, "configured not to restart")
 			return
 		}
 		if delay <= time.Duration(0) {
@@ -534,7 +532,7 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 	}
 
 	for cURI, httpHandlerFunc := range handlers {
-		c.cHandlers[cURI] = httpHandlerFunc
+		rootContainer.cHandlers[cURI] = httpHandlerFunc
 		log.Println("added URI", cURI)
 	}
 
@@ -624,7 +622,7 @@ func (c *Container) removeHttpHandlers(comp Component) {
 	// obtain all the handlers for the component
 	handlers := deriveHttpHandlers(comp)
 	if len(handlers) <= 0 {
-		log.Println("unable to find any http handlers to remove for", comp.GetName())
+		return
 	}
 
 	for cURI, _ := range handlers {
