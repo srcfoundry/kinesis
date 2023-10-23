@@ -399,6 +399,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	}
 }
 
+// persist Component whose fields' tagged as `persistable`, within the selected Database
 func (c *Container) persist(ctx context.Context, comp Component) error {
 	if c.persistence == nil {
 		return fmt.Errorf("%s does not have persistence add-on enabled", c)
@@ -433,6 +434,7 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 	return fmt.Errorf("unable to determine persistence DB type for %s", c)
 }
 
+// read last persisted value of Component fields' tagged as `persistable`,from Database during Preinitialization
 func (c *Container) load(ctx context.Context, comp Component) error {
 	if c.persistence == nil {
 		return fmt.Errorf("%s does not have persistence add-on enabled", c)
@@ -466,6 +468,7 @@ func (c *Container) load(ctx context.Context, comp Component) error {
 	return nil
 }
 
+// determine persistable fields of a component as PTypes
 func (c *Container) persistable(comp Component, encryptKey string) PTypes {
 	cValue := reflect.ValueOf(comp)
 	v := reflect.Indirect(cValue)
