@@ -1,0 +1,45 @@
+digraph G {
+  rankdir=TB; // Top to bottom layout
+
+  // Define nodes (states)
+  Submitted [shape=box, label="Submitted"]
+  Preinitializing [shape=box, label="Preinitializing"]
+  Preinitialized [shape=box, label="Preinitialized"]
+  Initializing [shape=box, label="Initializing"]
+  Initialized [shape=box, label="Initialized"]
+  Starting [shape=box, label="Starting"]
+  Restarting [shape=box, label="Restarting"]
+  Started [shape=box, label="Started"]
+  Stopping [shape=box, label="Stopping"]
+  Stopped [shape=box, label="Stopped"]
+  Tearingdown [shape=box, label="Tearingdown"]
+  Teareddown [shape=box, label="Teareddown"]
+
+  // Define transitions
+  Submitted -> Preinitializing
+  Preinitializing -> Preinitialized
+  Preinitialized -> Initializing
+  Initializing -> Initialized
+  Initialized -> Starting
+  Starting -> Started
+  Started -> Restarting [label="Control Msg: RestartMmux"]
+  Restarting -> Started [label="Control Msg: RestartAfter"]
+  Started -> Stopping [label="Control Msg: Shutdown"]
+  Stopping -> Stopped
+  Tearingdown -> Teareddown
+
+  // Define fallthrough transitions
+  Preinitializing -> Initializing [style=dotted, label="Fallthrough"]
+  Preinitialized -> Initialized [style=dotted, label="Fallthrough"]
+  Stopped -> Tearingdown [style=dotted, label="Fallthrough"]
+
+  // Specify edge labels
+  edge [fontname="Helvetica"]
+  node [fontname="Helvetica"]
+
+  // Specify graph attributes
+  label="Component Lifecycle Stages"
+  fontname="Helvetica"
+  fontsize=14
+}
+

@@ -4,10 +4,22 @@ Kinesis is an extensible model for developing event-driven microservices in gola
 on the [C4](https://c4model.com) model, making it easy to separate various functionalities which serve a purpose, into 
 separate <b>components</b>. A <b>container</b> comprises of those components which eventually make up a system.
 
+<br/>
+
+![C4 software model](doc/c4abstractions.png)
+
+<br/>
+
 A system could also be viewed as a collection of containers, each catering to an aspect of the overall system and therefore
 a container could be considered as a component. In addition to modelling container <-> component heirachies emphasis is also provided on how components act on a stimuli (```events or messages```) and communicate with each other.
 
 Each component gets to implement its own logic within each lifecycle stage, namely ```preinit, Init, PostInit, Start, Stop``` etc. The stage to which a component transitions next, is determined by a simple state machine (SM), generically implemented to oversee a component. Due to this generic nature, the SM is not involved with how each component would run within a stage or how it recovers from an error condition.
+
+<br/>
+
+![Component Stages](doc/fsm.png)
+
+<br/>
 
 Depending on the stimuli received, a component has the flexibility to alter its own state at any lifecycle stages, but at the same time is also subject to change by the encompassing container. For e.g just when a component is processing an event stimuli which causes the state to "Restart", the parent container would have received a system interrupt to shutdown all the components under it. So at any point in time, a component state is being determined by 2 or more separate goroutines which are concurrently being executed in different contexts.
 
@@ -57,8 +69,8 @@ The framework consists of a peculiar design consideration to always push a Golan
 Usage: ```go build [add-on options] cmd/kinesis.go```
 
 Add-on options:
-- ```http :                 HTTP add-on which starts an http server on port 8080 and exposes components as REST objects```
-- ```simplefiledb :         Persistence enabled using Simple file based NoSQL Database```
+- ```http :             HTTP add-on which starts an http server on port 8080 and exposes components as REST objects```
+- ```simplefiledb :     Persistence enabled using Simple file based NoSQL Database```
 
 e.g.,  ```go build -tags=http,simplefiledb cmd/kinesis.go ```
 
