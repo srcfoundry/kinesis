@@ -21,7 +21,7 @@ Each component gets to implement its own logic within each lifecycle stage, name
 
 <br/>
 
-Depending on the stimuli received, a component has the flexibility to alter its own state at any lifecycle stages, but at the same time is also subject to change by the encompassing container. For e.g just when a component is processing an event stimuli which causes the state to "Restart", the parent container would have received a system interrupt to shutdown all the components under it. So at any point in time, a component state is being determined by 2 or more separate goroutines which are concurrently being executed in different contexts.
+Depending on the stimuli received, a component has the flexibility to alter its own state at any lifecycle stages, but at the same time is also subject to change by the encompassing container. For e.g just when a component is processing an event stimuli which causes the state to "Restart", the root container would have received a system interrupt to shutdown all the components under it. So at any point in time, a component state is being determined by 2 or more separate goroutines which are concurrently being executed in different contexts.
 
 Add-on components such as an 'HTTP server' or 'Persistence' can be selectively included and activated by applying the appropriate Golang build tags during the build or 'go run' execution.
 <br/>
@@ -32,7 +32,7 @@ The ```SimpleComponent``` type implements all the methods within a Component int
 <br/>
 
 ### Dynamic HTTP URI
-The framework dynamically creates HTTP URIs' for all exported methods within a component, which resemble an HTTP handler function ```func (w http.ResponseWriter, r *http.Request)```. At the time of initializing a component, HTTP URIs' are derived from the component type and added to a HTTP handler map, maintained within the parent container, for purpose of forwarding HTTP requests. Corresponding HTTP handler entries are removed in the event a component is being stopped and teared down. 
+The framework dynamically creates HTTP URIs' for all exported methods within a component, which resemble an HTTP handler function ```func (w http.ResponseWriter, r *http.Request)```. At the time of initializing a component, HTTP URIs' are derived from the component type and added to a HTTP handler map, maintained within the root container, for purpose of forwarding HTTP requests. Corresponding HTTP handler entries are removed in the event a component is being stopped and teared down. 
 
 To activate the HTTP server and expose components as HTTP endpoints, build or run with build tag ```-tags=http```
 <br/>
@@ -56,7 +56,7 @@ type App struct {
 Sensitive component fields' tagged with ```persistable:"encrypt"``` would be stored encrypted in the DB with the help of a symmetric encryption key supplied using the ```KINESIS_DB_SYMMETRIC_ENCRYPT_KEY``` environment variable. The database connection string should be supplied through the ```KINESIS_DB_CONNECTION``` environment variable. Connection string should be prefixed by the connection type prefix, viz., file://, mongodb://, https:// etc., corresponding to the Database being used for persistence.
 
 
-e.g. while using -tags=simplefiledb use environment variable KINESIS_DB_CONNECTION=file:///var/opt/kinesisDB  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY=68gjh658jhg8tf
+e.g. while using ```-tags=simplefiledb``` use environment variable ```KINESIS_DB_CONNECTION=file://[absolute path to database directory]  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY=[base64 encoded string]```
 
 <br/>
 
@@ -69,8 +69,8 @@ The framework consists of a peculiar design consideration to always push a Golan
 Usage: ```go build [add-on options] cmd/kinesis.go```
 
 Add-on options:
-- ```http :             HTTP add-on which starts an http server on port 8080 and exposes components as REST objects```
-- ```simplefiledb :     Persistence enabled using Simple file based NoSQL Database```
+- ```http : HTTP add-on which starts an http server on port 8080 and exposes components as REST objects```
+- ```simplefiledb : Persistence enabled using Simple file based NoSQL Database```
 
 e.g.,  ```go build -tags=http,simplefiledb cmd/kinesis.go ```
 
@@ -80,10 +80,10 @@ e.g.,  ```go build -tags=http,simplefiledb cmd/kinesis.go ```
 Usage: ```env [environment variables] ./kinesis```
 
 environment variables options:
-- ```KINESIS_DB_CONNECTION :                Database connection string if any of the Persistence build tags are used```
-- ```KINESIS_DB_SYMMETRIC_ENCRYPT_KEY :    Encryption key to encrypt appropriately tagged component fields while persisting to database ```
-- ```ctrl-c to quit```
+- ```KINESIS_DB_CONNECTION : Database connection string if any of the Persistence build tags are used```
+- ```KINESIS_DB_SYMMETRIC_ENCRYPT_KEY : Encryption key to encrypt appropriately tagged component fields while persisting to database ```
 
 e.g.,  ```env KINESIS_DB_CONNECTION=file:///opt/database/kinesisDB  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY=68gjh658jhg8tf ./kinesis```
 
+use ctrl-c to quit
 <br/>
