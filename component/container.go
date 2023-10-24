@@ -19,9 +19,9 @@ import (
 )
 
 func init() {
+	// init primarily deals with initializing the default root container component
 	rootContainer = new(Container)
 	rootContainer.Name = "root"
-	//topLevelComponents = append(topLevelComponents, rootContainer)
 	AttachComponent(true, rootContainer)
 
 	signalCh := make(chan os.Signal, 1)
@@ -399,7 +399,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	}
 }
 
-// persist Component whose fields' tagged as `persistable`, within the selected Database
+// persist Component fields' tagged as `persistable`, within the selected Database
 func (c *Container) persist(ctx context.Context, comp Component) error {
 	if c.persistence == nil {
 		return fmt.Errorf("%s does not have persistence add-on enabled", c)

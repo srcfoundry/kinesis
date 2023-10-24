@@ -29,6 +29,8 @@ Add-on components such as an 'HTTP server' or 'Persistence' can be selectively i
 ### Component design
 The ```SimpleComponent``` type implements all the methods within a Component interface. Additional component types could be composed by including SimpleComponent as an embedded type thereby acquiring all the methods of the embedded type, which could be overridden by the embedding component. Container types could be composed by embedding the ```Container``` type, which in turn embeds the SimpleComponent type.
 
+Have a look at Component lifecycle FSM defined [here](https://github.com/srcfoundry/kinesis/blob/5c87ad24312a2f5613688da46cdc21c769c73474/component/container.go#L210)
+
 <br/>
 
 ### Dynamic HTTP URI

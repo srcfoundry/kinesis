@@ -2,6 +2,7 @@ package component
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -456,6 +457,87 @@ func Test_validateName(t *testing.T) {
 			}
 		})
 	}
+}
+
+type testNoSQLDB struct {
+	persistBytes []byte
+}
+
+func (s *testNoSQLDB) Connect(ctx context.Context, options ...interface{}) error {
+	return nil
+}
+func (s *testNoSQLDB) Disconnect(ctx context.Context, options ...interface{}) error {
+	return nil
+}
+func (s *testNoSQLDB) Insert(ctx context.Context, collection string, document interface{}, args ...interface{}) error {
+	return nil
+}
+func (s *testNoSQLDB) Update(ctx context.Context, collection string, filter interface{}, update interface{}, args ...interface{}) error {
+	s.persistBytes, _ = json.Marshal(update)
+	return nil
+}
+func (s *testNoSQLDB) Delete(ctx context.Context, collection string, filter interface{}, args ...interface{}) error {
+	return nil
+}
+func (s *testNoSQLDB) FindOne(ctx context.Context, collection string, filter interface{}, result interface{}, args ...interface{}) error {
+	_ = json.Unmarshal(s.persistBytes, result)
+	return nil
+}
+func (s *testNoSQLDB) Find(ctx context.Context, collection string, filter interface{}, args ...interface{}) ([]interface{}, error) {
+	return nil, nil
+}
+
+func TestContainer_Persistence(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.Add(c)
+
+	os.Setenv("KINESIS_DB_CONNECTION", "/home")
+	defer os.Unsetenv("KINESIS_DB_CONNECTION")
+
+	os.Setenv("KINESIS_DB_SYMMETRIC_ENCRYPT_KEY", "CAFEBEA")
+	defer os.Unsetenv("KINESIS_DB_CONNECTION")
+
+	persistence := new(Persistence)
+	persistence.Name = "testFileDB"
+	persistence.DB = &testNoSQLDB{}
+	AttachComponent(false, persistence)
+
+	type TestPersistComponent struct {
+		SimpleComponent
+		String1 string `persistable:"native"`
+		Int1    int    `persistable:"encrypt"`
+	}
+
+	// assign values to TestPersistComponent persistable fields, followed by adding the component
+	tc1 := TestPersistComponent{String1: "test string", Int1: 77}
+	tc1.Name = "TestPersist"
+	c.Add(&tc1)
+
+	_ = tc1.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
+	// if err != nil {
+	// 	t.Error(err)
+	// 	t.Fail()
+	// }
+
+	tc2 := TestPersistComponent{}
+	tc2.Name = "TestPersist"
+	err := c.Add(&tc2)
+	if err != nil {
+		t.Error(err)
+		t.Fail()
+	}
+
+	if tc2.String1 != tc1.String1 {
+		t.Errorf("TestContainer_Persistence TestPersistComponent observed String1 = %v, want %v", tc2.String1, tc2.String1)
+	}
+
+	if tc2.String1 != tc1.String1 {
+		t.Errorf("TestContainer_Persistence TestPersistComponent observed Int1 = %v, want %v", tc2.Int1, tc2.Int1)
+	}
+
+	shutdownTestContainer(c, 2*time.Second)
+
 }
 
 type TestRestartableSimpleType struct {
