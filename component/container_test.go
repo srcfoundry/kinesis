@@ -69,44 +69,6 @@ func TestContainer_Add(t *testing.T) {
 	shutdownTestContainer(c, 5*time.Second)
 }
 
-func TestContainer_HandleInterrupt(t *testing.T) {
-	c := &Container{}
-	c.Name = "testContainer"
-	c.Add(c)
-
-	type args struct {
-		comp Component
-	}
-	tests := []struct {
-		name    string
-		args    args
-		wantErr bool
-	}{
-		{
-			name: "SimpleComponent_HandleInterrupt",
-			args: args{
-				comp: &SimpleComponent{Name: "simpleTestComponent"},
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-
-			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
-				t.Errorf("Container.Add() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-
-	time.Sleep(2 * time.Second)
-	pid := syscall.Getpid()
-	currProcess, _ := os.FindProcess(pid)
-	currProcess.Signal(syscall.SIGINT)
-	time.Sleep(2 * time.Second)
-}
-
 func TestContainer_GetComponentCopy(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
@@ -557,4 +519,42 @@ func TestContainer_AddRestartableComponent(t *testing.T) {
 		})
 	}
 	shutdownTestContainer(c, 5*time.Second)
+}
+
+func TestContainer_HandleInterrupt(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.Add(c)
+
+	type args struct {
+		comp Component
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "SimpleComponent_HandleInterrupt",
+			args: args{
+				comp: &SimpleComponent{Name: "simpleTestComponent"},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
+				t.Errorf("Container.Add() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+
+	time.Sleep(2 * time.Second)
+	pid := syscall.Getpid()
+	currProcess, _ := os.FindProcess(pid)
+	currProcess.Signal(syscall.SIGINT)
+	time.Sleep(2 * time.Second)
 }
