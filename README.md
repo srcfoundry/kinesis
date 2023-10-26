@@ -12,7 +12,7 @@ separate <b>components</b>.
 
 A system could also be viewed as a collection of containers, each catering to an aspect of the overall system. Container could be considered as a component too. In addition to modelling container <-> component heirachies emphasis is also provided on how components act on a stimuli (```events or messages```) and communicate with each other.
 
-Each component gets to implement its own logic within each lifecycle stage, namely ```preinit, Init, PostInit, Start, Stop``` etc. The stage to which a component transitions next, is determined by a simple state machine (SM), generically implemented to oversee a component. Due to this generic nature, the SM is not involved with how each component would run within a stage or how it recovers from an error condition.
+Each component gets to implement its own logic within each lifecycle stage, namely ```preinit, Init, PostInit, Start, Stop``` etc. The stage to which a component transitions next, is determined by a simple state machine (SM), generically implemented to oversee a component. Due to this generic nature, the SM is not involved with how each component would run within a stage or how it recovers from an error condition. Have a look at Component lifecycle FSM defined [here](https://github.com/srcfoundry/kinesis/blob/5c87ad24312a2f5613688da46cdc21c769c73474/component/container.go#L210)
 
 <br/>
 
@@ -21,8 +21,6 @@ Each component gets to implement its own logic within each lifecycle stage, name
 <br/>
 
 Depending on the stimuli received, a component has the flexibility to alter its own state at any lifecycle stages, but at the same time is also subject to change by the encompassing container. For e.g just when a component is processing an event stimuli which causes the state to "Restart", the root container would have received a system interrupt to shutdown all the components under it. So at any point in time, a component state is being determined by 2 or more separate goroutines which are concurrently being executed in different contexts.
-
-Have a look at Component lifecycle FSM defined [here](https://github.com/srcfoundry/kinesis/blob/5c87ad24312a2f5613688da46cdc21c769c73474/component/container.go#L210)
 
 Add-on components such as an 'HTTP server' or 'Persistence' can be selectively included and activated by applying the appropriate Golang build tags during the build or 'go run' execution.
 <br/>
