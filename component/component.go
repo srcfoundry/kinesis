@@ -530,7 +530,7 @@ func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgType interfa
 	var err error
 
 	select {
-	case <-time.After(15 * time.Second):
+	case <-time.After(75 * time.Second):
 		err = errors.New("notification max timeout")
 	case <-ctx.Done():
 		err = ctx.Err()
