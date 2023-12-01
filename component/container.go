@@ -483,7 +483,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		// making sure panics are caught while starting a component
 		if r := recover(); r != nil {
-			log.Println(comp, "mmux recovering from panic:", r, string(debug.Stack()))
+			log.Println(comp, "startComponent recovering from panic:", r, string(debug.Stack()))
 		}
 		if comp.GetStage() >= Stopping {
 			return
