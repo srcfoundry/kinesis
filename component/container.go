@@ -389,7 +389,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		err = handler(msgCtx, msg)
 		if err != nil {
 			errCh <- err
-			return
+			continue
 		}
 
 		// if persistence add-on is enabled, persist the resulting state of the component after message processing
