@@ -289,7 +289,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 			if !found {
 				delay = 5 * time.Second
 			}
-			log.Println(comp, "to restart after", delay)
+			logger.Sugar().Warnf("restarting %s after %s", comp, delay)
 			time.Sleep(delay)
 			return nil
 		case Shutdown:
@@ -300,7 +300,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Stopping:
 		err := comp.Stop(ctx)
 		if err != nil {
-			log.Println(err)
+			logger.Error(comp.GetName(), zap.String("stop", "failed"), zap.Error(err))
 			return err
 		}
 		c.removeHttpHandlers(comp)
@@ -323,7 +323,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		// making sure panics are caught while processing messages
 		if r := recover(); r != nil {
-			log.Println(comp, "mmux recovering from panic:", r, string(debug.Stack()))
+			logger.Sugar().Warnf("%s mmux recovering from panic: %s: %s", comp.GetName(), r, string(debug.Stack()))
 		}
 		// mmux would only be restarted if the component is already Started & still Active
 		ctx = context.WithValue(ctx, ControlMsgType, RestartMmux)
@@ -342,7 +342,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		}
 
 		if err != nil {
-			log.Println(err)
+			logger.Error(comp.GetName(), zap.Error(err))
 			if errCh != nil {
 				errCh <- err
 			}
@@ -363,7 +363,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 				if comp.GetStage() == Stopping {
 					err = c.componentLifecycleFSM(msgCtx, comp)
 					if err != nil {
-						log.Println(comp, "failed to Stop, due to", err)
+						logger.Error(comp.GetName(), zap.String("stop", "failed"), zap.Error(err))
 						errCh <- err
 						continue
 					}
@@ -391,7 +391,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	forwardMessage:
 		handler := comp.getSyncMessageHandler(msgType)
 		if handler == nil {
-			log.Printf("unable to find handler for message type: %s. passing message to component default message handler", msgType)
+			logger.Sugar().Debugf("unable to find handler for message type: %s. passing message to component default message handler", msgType)
 			handler = comp.getSyncMessageHandler(comp.GetName())
 		}
 		err = handler(msgCtx, msg)
@@ -491,7 +491,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		// making sure panics are caught while starting a component
 		if r := recover(); r != nil {
-			log.Println(comp, "startComponent recovering from panic:", r, string(debug.Stack()))
+			logger.Sugar().Warnf("%s startComponent recovering from panic: %s: %s", comp.GetName(), r, string(debug.Stack()))
 		}
 		if comp.GetStage() >= Stopping {
 			return
@@ -507,7 +507,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		ctx = context.WithValue(ctx, RestartAfter, delay)
 		err := c.componentLifecycleFSM(ctx, comp)
 		if err != nil {
-			log.Println(comp, "failed to restart due to", err)
+			logger.Error(comp.GetName(), zap.String("restart", "failed"), zap.Error(err))
 			return
 		}
 		// proceed to start the component
@@ -516,7 +516,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 
 	err := comp.Start(ctx)
 	if err != nil {
-		log.Println(comp, "encountered following error while starting.", err)
+		logger.Error(comp.GetName(), zap.String("start", "failed"), zap.Error(err))
 		return
 	}
 }
@@ -545,7 +545,7 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 
 	for cURI, httpHandlerFunc := range handlers {
 		rootContainer.cHandlers[cURI] = httpHandlerFunc
-		log.Println("added URI", cURI)
+		logger.Debug(rootContainer.GetName(), zap.String("method", "addURI"), zap.String("URI", cURI), zap.Bool("success", true))
 	}
 
 returnnoerror:
@@ -568,6 +568,7 @@ func (c *Container) Stop(ctx context.Context) error {
 		cComp, found := c.cComponents[cName]
 
 		if !found || cComp.comp == nil {
+			//logger.Sugar().Warnf("shutting down %s", nxtTopLvlComp)
 			log.Println(cName, "component no longer found within container", c.GetName())
 		} else if !c.Matches(cComp.comp) {
 			log.Println("sending", Shutdown, "signal to", cName)
