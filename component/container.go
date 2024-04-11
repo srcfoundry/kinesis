@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -416,7 +415,7 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 
 	pTypes := c.persistable(comp, c.persistence.GetSymmetricKey())
 	if len(pTypes) <= 0 {
-		//log.Println("unable to find any persistable fields within", comp)
+		logger.Sugar().Debugf("unable to find any persistable fields within %s", comp)
 		return nil
 	}
 
@@ -568,14 +567,13 @@ func (c *Container) Stop(ctx context.Context) error {
 		cComp, found := c.cComponents[cName]
 
 		if !found || cComp.comp == nil {
-			//logger.Sugar().Warnf("shutting down %s", nxtTopLvlComp)
-			log.Println(cName, "component no longer found within container", c.GetName())
+			logger.Sugar().Warnf("%s component no longer found within container %s", cName, c.GetName())
 		} else if !c.Matches(cComp.comp) {
-			log.Println("sending", Shutdown, "signal to", cName)
+			logger.Sugar().Debugf("%s issuing %s to %s", c, Shutdown, cName)
 
 			err := cComp.comp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 			if err != nil {
-				log.Println(c, "received error:", err, "after sending", Shutdown, "signal to", cName)
+				logger.Error(c.GetName(), zap.Any(string(ControlMsgType), Shutdown), zap.String("target", cName), zap.Error(err))
 			}
 		}
 
@@ -640,7 +638,7 @@ func (c *Container) removeHttpHandlers(comp Component) {
 
 	for cURI, _ := range handlers {
 		delete(c.cHandlers, cURI)
-		log.Println("removed URI", cURI)
+		logger.Debug(c.GetName(), zap.String("method", "removeURI"), zap.String("URI", cURI), zap.Bool("success", true))
 	}
 }
 
@@ -657,7 +655,7 @@ func (c *Container) removeComponent(name string) {
 	}
 
 	if !found {
-		log.Println("unable to find", name, "to remove, within", c.GetName())
+		logger.Sugar().Warnf("unable to find %s to remove, within %s", name, c.GetName())
 		return
 	}
 
@@ -690,15 +688,15 @@ func validateName(comp Component) error {
 
 func stateChangeCallbacker(comp Component) func(context.Context, int, interface{}) {
 	return func(ctx context.Context, cbIndx int, notification interface{}) {
+		logger.Sugar().Debugf("%s stateChangeCallbacker: %s", comp.GetName())
 		switch notification {
 		case Active, Inactive:
-			log.Println("proceeding to set new ETag for", comp.GetName())
+			logger.Sugar().Debugf("proceeding to set new ETag for %s", comp.GetName())
 			SetComponentEtag(comp)
 		case Stopping:
-			log.Println("stateChangeCallbacker: case Stopping")
 			err := comp.RemoveCallback(cbIndx)
 			if err != nil {
-				log.Println(err)
+				logger.Error(comp.GetName(), zap.String("action", "RemoveCallback"), zap.Error(err))
 			}
 		default:
 		}
