@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -14,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/mohae/deepcopy"
+	"github.com/srcfoundry/kinesis/anylogger"
 )
 
 // MsgType could be used by Components' to define its own set of message types. Used in conjunction with a lookup map in determining the
@@ -249,7 +249,7 @@ func (d *SimpleComponent) String() string {
 
 func (d *SimpleComponent) setStage(s stage) {
 	d.getstateTransitionLock().Lock()
-	log.Println(d, s)
+	anylogger.Debug()(d.String(), s)
 	d.Stage = s
 	d.getstateTransitionLock().Unlock()
 
@@ -272,7 +272,7 @@ func (d *SimpleComponent) setState(s state) {
 	d.State = s
 
 	if d.State != prevState {
-		log.Println(d, d.State)
+		anylogger.Info()(d.String(), d.State)
 		d.invokeCallbacks(d.State)
 		d.notifySubscribers(d.State)
 	}
@@ -327,7 +327,7 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 	}
 
 	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
-	log.Printf("successfully removed callback function at index %v within %v\n", cbIndx, d.GetName())
+	anylogger.Debugf()("successfully removed callback function at index %v within %v\n", cbIndx, d.GetName())
 	return nil
 }
 
@@ -341,7 +341,7 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 	}
 
 	d.subscribers[subscriber] = subscriberCh
-	log.Println(subscriber, "successfully subscribed to", d.GetName())
+	anylogger.Info()(subscriber, "successfully subscribed to", d.GetName())
 	return nil
 }
 
@@ -355,7 +355,7 @@ func (d *SimpleComponent) Unsubscribe(subscriber string) error {
 	}
 
 	delete(d.subscribers, subscriber)
-	log.Println(subscriber, "successfully unsubscribed from", d.GetName())
+	anylogger.Info()(subscriber, "successfully unsubscribed from", d.GetName())
 	return nil
 }
 
@@ -382,9 +382,9 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 		<-ctx.Done()
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
-			log.Println(d.GetName(), "callback at index", cbIndx, "exceeded deadline for notification", notification)
+			anylogger.Errorf()("%s callback at index %d exceeded deadline for notification", d.GetName(), cbIndx)
 		case context.Canceled:
-			//log.Println(d.GetName(), "callback at index", cbIndx, "executed successfully")
+			anylogger.Debugf()("%s callback at index %d executed successfully", d.GetName(), cbIndx)
 		}
 	}
 }

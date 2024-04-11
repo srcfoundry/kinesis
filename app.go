@@ -2,7 +2,6 @@ package kinesis
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/srcfoundry/kinesis/anylogger"
@@ -19,8 +18,8 @@ func (a *App) PostInit(context.Context) error {
 	if len(a.LastExecutedDateTime) <= 0 {
 		a.LastExecutedDateTime = "--"
 	}
-	anylogger.Info(fmt.Sprintf("%s last executed on: %s\n", a, a.LastExecutedDateTime))
-	anylogger.Info(fmt.Sprintf("Number of times %s executed: %v\n", a, a.PreviousExecutions))
+	anylogger.Infof()("%s last executed on: %s", a, a.LastExecutedDateTime)
+	anylogger.Infof()("Number of times %s executed: %v", a, a.PreviousExecutions)
 	a.LastExecutedDateTime = time.Now().Format("January 02, 2006 15:04:05 PM")
 	a.PreviousExecutions++
 	return nil

@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"reflect"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/srcfoundry/kinesis/anylogger"
 )
 
 func shutdownTestContainer(c *Container, delay time.Duration) {
@@ -20,7 +21,7 @@ func shutdownTestContainer(c *Container, delay time.Duration) {
 
 	go func() {
 		time.Sleep(delay)
-		log.Println("shutdownTestContainer....")
+		anylogger.Debug()("shutdownTestContainer....")
 		c.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 	}()
 
@@ -554,13 +555,13 @@ func (d *TestRestartableSimpleType) Start(context.Context) error {
 
 	d.ch = make(chan struct{})
 	<-d.ch
-	log.Println("returning from TestRestartableSimpleType Start()")
+	anylogger.Debug()("returning from TestRestartableSimpleType Start()")
 	return nil
 }
 
 func (d *TestRestartableSimpleType) Stop(context.Context) error {
 	close(d.ch)
-	log.Println("closed TestRestartableSimpleType ch")
+	anylogger.Debug()("closed TestRestartableSimpleType ch")
 	return nil
 }
 

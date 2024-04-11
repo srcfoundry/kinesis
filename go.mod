@@ -8,4 +8,10 @@ require (
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826
 )
 
-require github.com/gorilla/mux v1.8.0
+require (
+	github.com/gorilla/mux v1.8.0
+	go.uber.org/zap v1.27.0
+	golang.org/x/exp v0.0.0-20240404231335-c0f41cb1a7a0
+)
+
+require go.uber.org/multierr v1.10.0 // indirect
