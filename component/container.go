@@ -365,6 +365,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 						continue
 					}
 				}
+				errCh <- err
 				return
 			}
 		case ComponentMsgType:
