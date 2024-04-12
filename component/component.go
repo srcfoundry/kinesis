@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -14,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mitchellh/hashstructure/v2"
 	"github.com/mohae/deepcopy"
+	"go.uber.org/zap"
 )
 
 // MsgType could be used by Components' to define its own set of message types. Used in conjunction with a lookup map in determining the
@@ -249,7 +249,7 @@ func (d *SimpleComponent) String() string {
 
 func (d *SimpleComponent) setStage(s stage) {
 	d.getstateTransitionLock().Lock()
-	log.Println(d, s)
+	logger.Debug("stage transition", zap.String("component", d.GetName()), zap.Any("stage", s))
 	d.Stage = s
 	d.getstateTransitionLock().Unlock()
 
@@ -272,7 +272,7 @@ func (d *SimpleComponent) setState(s state) {
 	d.State = s
 
 	if d.State != prevState {
-		log.Println(d, d.State)
+		logger.Info("state transition", zap.String("component", d.GetName()), zap.Any("state", s))
 		d.invokeCallbacks(d.State)
 		d.notifySubscribers(d.State)
 	}
@@ -327,7 +327,7 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 	}
 
 	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
-	log.Printf("successfully removed callback function at index %v within %v\n", cbIndx, d.GetName())
+	logger.Debug("removed callback function", zap.String("component", d.GetName()), zap.Int("index", cbIndx))
 	return nil
 }
 
@@ -341,7 +341,7 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 	}
 
 	d.subscribers[subscriber] = subscriberCh
-	log.Println(subscriber, "successfully subscribed to", d.GetName())
+	logger.Info("subscription", zap.String("component", d.GetName()), zap.String("subscriber", subscriber))
 	return nil
 }
 
@@ -355,7 +355,7 @@ func (d *SimpleComponent) Unsubscribe(subscriber string) error {
 	}
 
 	delete(d.subscribers, subscriber)
-	log.Println(subscriber, "successfully unsubscribed from", d.GetName())
+	logger.Info("unsubscription", zap.String("component", d.GetName()), zap.String("subscriber", subscriber))
 	return nil
 }
 
@@ -382,9 +382,9 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 		<-ctx.Done()
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
-			log.Println(d.GetName(), "callback at index", cbIndx, "exceeded deadline for notification", notification)
+			logger.Info("callback exceeded notification deadline", zap.String("component", d.GetName()), zap.Int("index", cbIndx), zap.Any("notification", notification))
 		case context.Canceled:
-			//log.Println(d.GetName(), "callback at index", cbIndx, "executed successfully")
+			logger.Debug("callback executed", zap.String("component", d.GetName()), zap.Int("index", cbIndx), zap.Any("notification", notification))
 		}
 	}
 }

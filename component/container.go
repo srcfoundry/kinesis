@@ -35,7 +35,7 @@ func init() {
 
 	go func() {
 		osSignal := <-signalCh
-		logger.Info(rootContainer.GetName(), zap.String("signal", osSignal.String()))
+		logger.Info("received interrupt signal", zap.String("container", rootContainer.GetName()), zap.String("component", rootContainer.GetName()), zap.String("signal", osSignal.String()))
 
 		signal.Stop(signalCh)
 		close(signalCh)
@@ -48,10 +48,10 @@ func init() {
 		// proceed to shutdown top level components (including root container) if system interrupt is received.
 		for i := len(topLevelComponents) - 1; i >= 0; i-- {
 			nxtTopLvlComp := topLevelComponents[i]
-			logger.Sugar().Infof("shutting down %s", nxtTopLvlComp)
+			logger.Info("sending SyncMessage", zap.String("container", rootContainer.GetName()), zap.String("component", nxtTopLvlComp.GetName()), zap.Any(string(ControlMsgType), Shutdown))
 			err := nxtTopLvlComp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 			if err == nil {
-				logger.Debug(nxtTopLvlComp.GetName(), zap.Any(string(ControlMsgType), Shutdown), zap.Bool("success", true))
+				logger.Debug("SendSyncMessage", zap.String("container", rootContainer.GetName()), zap.String("component", nxtTopLvlComp.GetName()), zap.Any(string(ControlMsgType), Shutdown), zap.Bool("success", true))
 			}
 		}
 
@@ -86,7 +86,7 @@ func AttachComponent(isHead bool, addon Component) {
 	} else {
 		err := rootContainer.Add(addon)
 		if err != nil {
-			logger.Error(addon.GetName(), zap.String("add", "failed"), zap.Error(err))
+			logger.Error("error while attaching", zap.String("container", rootContainer.GetName()), zap.String("component", addon.GetName()), zap.Error(err))
 			os.Exit(1)
 		}
 	}
@@ -138,7 +138,7 @@ func (c *Container) Add(comp Component) error {
 				// proceed to initialize component
 				err = c.componentLifecycleFSM(context.TODO(), nextComp)
 				if err != nil {
-					logger.Error(nextComp.GetName(), zap.String("activation", "failed"), zap.Error(err))
+					logger.Error("addon activation failure", zap.String("container", c.GetName()), zap.String("component", nextComp.GetName()), zap.Error(err))
 					notifyActivation <- err
 					continue
 				}
@@ -146,14 +146,13 @@ func (c *Container) Add(comp Component) error {
 				cComm := cComponent{}
 				err = c.toCanonical(nextComp, &cComm)
 				if err != nil {
-					logger.Error(comp.GetName(), zap.String("toCanonical", "failed"), zap.Error(err))
+					logger.Error("failed Canonical conversion", zap.String("container", c.GetName()), zap.String("component", nextComp.GetName()), zap.Error(err))
 					notifyActivation <- err
 					continue
 				}
 
 				if _, found := c.cComponents[nextComp.GetName()]; found {
 					err := fmt.Errorf("%v already activated", nextComp.GetName())
-					logger.Error(nextComp.GetName(), zap.String("add", "failed"), zap.Error(err))
 					notifyActivation <- err
 					continue
 				}
@@ -165,7 +164,6 @@ func (c *Container) Add(comp Component) error {
 				// after successfull initilaization, proceed to start the component
 				err = c.componentLifecycleFSM(context.TODO(), nextComp)
 				if err != nil {
-					logger.Error(nextComp.GetName(), zap.String("startup", "failed"), zap.Error(err))
 					notifyActivation <- err
 					continue
 				}
@@ -194,10 +192,10 @@ func (c *Container) Add(comp Component) error {
 		addons = nil
 
 		for _, addon := range addonsCopy {
-			logger.Sugar().Infof("activating %s", addon)
+			logger.Info("proceed to activate", zap.String("container", rootContainer.GetName()), zap.String("component", addon.GetName()))
 			err = rootContainer.Add(addon)
 			if err != nil {
-				logger.Fatal(addon.GetName(), zap.String("start", "failed"), zap.Error(err))
+				logger.Fatal("addon activation failure", zap.String("container", rootContainer.GetName()), zap.String("component", addon.GetName()), zap.Error(err))
 			}
 		}
 	}
@@ -221,7 +219,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		if rootContainer != nil && rootContainer.persistence != nil {
 			err := rootContainer.persist(context.Background(), comp)
 			if err != nil {
-				logger.Error(comp.GetName(), zap.String("persistence", "failed"), zap.Error(err))
+				logger.Error("persistence failure", zap.String("container", rootContainer.GetName()), zap.String("component", comp.GetName()), zap.Error(err))
 			}
 		}
 		comp.getMutatingLock().Unlock()
@@ -252,7 +250,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		if rootContainer != nil && rootContainer.persistence != nil {
 			err := rootContainer.load(context.Background(), comp)
 			if err != nil {
-				logger.Error(comp.GetName(), zap.String("load", "failed"), zap.Error(err))
+				logger.Error("failed persistence loading", zap.String("container", rootContainer.GetName()), zap.String("component", comp.GetName()), zap.Error(err))
 			}
 		}
 
@@ -279,7 +277,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		ctrlMsg := ctx.Value(ControlMsgType)
 		switch ctrlMsg {
 		case RestartMmux:
-			logger.Sugar().Warnf("restarting %s mmux", comp)
+			logger.Warn("restarting mmux", zap.String("container", rootContainer.GetName()), zap.String("component", comp.GetName()))
 			go c.startMmux(ctx, comp)
 		case RestartAfter:
 			comp.setStage(Restarting)
@@ -288,7 +286,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 			if !found {
 				delay = 5 * time.Second
 			}
-			logger.Sugar().Warnf("restarting %s after %s", comp, delay)
+			logger.Warn("component restart", zap.String("container", rootContainer.GetName()), zap.String("component", comp.GetName()), zap.Any("delay", delay))
 			time.Sleep(delay)
 			return nil
 		case Shutdown:
@@ -299,7 +297,7 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 	case Stopping:
 		err := comp.Stop(ctx)
 		if err != nil {
-			logger.Error(comp.GetName(), zap.String("stop", "failed"), zap.Error(err))
+			logger.Error("failed to stop", zap.String("container", rootContainer.GetName()), zap.String("component", comp.GetName()), zap.Error(err))
 			return err
 		}
 		c.removeHttpHandlers(comp)
@@ -322,7 +320,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		// making sure panics are caught while processing messages
 		if r := recover(); r != nil {
-			logger.Sugar().Warnf("%s mmux recovering from panic: %s: %s", comp.GetName(), r, string(debug.Stack()))
+			logger.Warn("mmux recovering from panic", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.Any("recover", r), zap.Any("stacktrace", debug.Stack()))
 		}
 		// mmux would only be restarted if the component is already Started & still Active
 		ctx = context.WithValue(ctx, ControlMsgType, RestartMmux)
@@ -341,7 +339,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		}
 
 		if err != nil {
-			logger.Error(comp.GetName(), zap.Error(err))
+			logger.Error("error reading message", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.Error(err))
 			if errCh != nil {
 				errCh <- err
 			}
@@ -362,7 +360,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 				if comp.GetStage() == Stopping {
 					err = c.componentLifecycleFSM(msgCtx, comp)
 					if err != nil {
-						logger.Error(comp.GetName(), zap.String("stop", "failed"), zap.Error(err))
+						logger.Error("failed to stop", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.Error(err))
 						errCh <- err
 						continue
 					}
@@ -390,7 +388,7 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 	forwardMessage:
 		handler := comp.getSyncMessageHandler(msgType)
 		if handler == nil {
-			logger.Sugar().Debugf("unable to find handler for message type: %s. passing message to component default message handler", msgType)
+			logger.Debug("passing message to default message handler", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.Any("msgType", msgType))
 			handler = comp.getSyncMessageHandler(comp.GetName())
 		}
 		err = handler(msgCtx, msg)
@@ -415,7 +413,7 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 
 	pTypes := c.persistable(comp, c.persistence.GetSymmetricKey())
 	if len(pTypes) <= 0 {
-		logger.Sugar().Debugf("unable to find any persistable fields within %s", comp)
+		logger.Debug("unable to find any persistable fields", zap.String("container", c.GetName()), zap.String("component", comp.GetName()))
 		return nil
 	}
 
@@ -490,7 +488,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 	defer func(ctx context.Context, comp Component) {
 		// making sure panics are caught while starting a component
 		if r := recover(); r != nil {
-			logger.Sugar().Warnf("%s startComponent recovering from panic: %s: %s", comp.GetName(), r, string(debug.Stack()))
+			logger.Warn("startComponent recovering from panic", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.Any("recover", r), zap.Any("stacktrace", debug.Stack()))
 		}
 		if comp.GetStage() >= Stopping {
 			return
@@ -506,7 +504,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 		ctx = context.WithValue(ctx, RestartAfter, delay)
 		err := c.componentLifecycleFSM(ctx, comp)
 		if err != nil {
-			logger.Error(comp.GetName(), zap.String("restart", "failed"), zap.Error(err))
+			logger.Error("failed to restart", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.Error(err))
 			return
 		}
 		// proceed to start the component
@@ -515,7 +513,7 @@ func (c *Container) startComponent(ctx context.Context, comp Component) {
 
 	err := comp.Start(ctx)
 	if err != nil {
-		logger.Error(comp.GetName(), zap.String("start", "failed"), zap.Error(err))
+		logger.Error("failed to start", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.Error(err))
 		return
 	}
 }
@@ -544,7 +542,7 @@ func (c *Container) toCanonical(comp Component, cComp *cComponent) error {
 
 	for cURI, httpHandlerFunc := range handlers {
 		rootContainer.cHandlers[cURI] = httpHandlerFunc
-		logger.Debug(rootContainer.GetName(), zap.String("method", "addURI"), zap.String("URI", cURI), zap.Bool("success", true))
+		logger.Info("adding URI", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.String("URI", cURI))
 	}
 
 returnnoerror:
@@ -567,13 +565,12 @@ func (c *Container) Stop(ctx context.Context) error {
 		cComp, found := c.cComponents[cName]
 
 		if !found || cComp.comp == nil {
-			logger.Sugar().Warnf("%s component no longer found within container %s", cName, c.GetName())
+			logger.Warn("component no longer found within container", zap.String("container", c.GetName()), zap.String("component", cName))
 		} else if !c.Matches(cComp.comp) {
-			logger.Sugar().Debugf("%s issuing %s to %s", c, Shutdown, cName)
-
+			logger.Debug("sending ControlMsgType", zap.String("container", c.GetName()), zap.String("component", cName), zap.Any("ControlMsgType", Shutdown))
 			err := cComp.comp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 			if err != nil {
-				logger.Error(c.GetName(), zap.Any(string(ControlMsgType), Shutdown), zap.String("target", cName), zap.Error(err))
+				logger.Error("SendSyncMessage failed", zap.String("container", c.GetName()), zap.String("component", cName), zap.Any("ControlMsgType", Shutdown), zap.Error(err))
 			}
 		}
 
@@ -638,7 +635,7 @@ func (c *Container) removeHttpHandlers(comp Component) {
 
 	for cURI, _ := range handlers {
 		delete(c.cHandlers, cURI)
-		logger.Debug(c.GetName(), zap.String("method", "removeURI"), zap.String("URI", cURI), zap.Bool("success", true))
+		logger.Info("removed URI", zap.String("container", c.GetName()), zap.String("component", comp.GetName()), zap.String("URI", cURI))
 	}
 }
 
@@ -655,7 +652,7 @@ func (c *Container) removeComponent(name string) {
 	}
 
 	if !found {
-		logger.Sugar().Warnf("unable to find %s to remove, within %s", name, c.GetName())
+		logger.Warn("unable to find component within container", zap.String("container", c.GetName()), zap.String("component", name))
 		return
 	}
 
@@ -688,15 +685,19 @@ func validateName(comp Component) error {
 
 func stateChangeCallbacker(comp Component) func(context.Context, int, interface{}) {
 	return func(ctx context.Context, cbIndx int, notification interface{}) {
-		logger.Sugar().Debugf("%s stateChangeCallbacker: %s", comp.GetName())
+		containerName := ""
+		if comp.GetContainer() != nil {
+			containerName = comp.GetContainer().GetName()
+		}
+		logger.Debug("stateChangeCallbacker", zap.String("container", containerName), zap.String("component", comp.GetName()), zap.Any("notification", notification))
 		switch notification {
 		case Active, Inactive:
-			logger.Sugar().Debugf("proceeding to set new ETag for %s", comp.GetName())
+			logger.Debug("proceeding to set new ETag", zap.String("container", containerName), zap.String("component", comp.GetName()))
 			SetComponentEtag(comp)
 		case Stopping:
 			err := comp.RemoveCallback(cbIndx)
 			if err != nil {
-				logger.Error(comp.GetName(), zap.String("action", "RemoveCallback"), zap.Error(err))
+				logger.Error("error while removing callback", zap.String("container", containerName), zap.String("component", comp.GetName()), zap.Error(err))
 			}
 		default:
 		}
