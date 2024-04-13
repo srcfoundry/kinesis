@@ -59,7 +59,7 @@ func init() {
 		go func() {
 			err := topLevelComponents[0].SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
 			if err == nil {
-				log.Println("Shutdown notification was successfully sent to", topLevelComponents[0])
+				logger.Debug("SendSyncMessage", zap.String("container", rootContainer.GetName()), zap.String("component", topLevelComponents[0].GetName()), zap.Any(string(ControlMsgType), Shutdown), zap.Bool("success", true))
 			}
 		}()
 
