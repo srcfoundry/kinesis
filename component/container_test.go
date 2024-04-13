@@ -637,6 +637,5 @@ func TestContainer_HandleInterrupt(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	pid := syscall.Getpid()
 	currProcess, _ := os.FindProcess(pid)
-	currProcess.Signal(syscall.SIGINT)
-	time.Sleep(2 * time.Second)
+	currProcess.Signal(syscall.SIGUSR1)
 }
