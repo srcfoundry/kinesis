@@ -28,6 +28,7 @@ Add-on components such as an 'HTTP server' or 'Persistence' can be selectively i
 ### Component design
 The ```SimpleComponent``` type implements all the methods within a Component interface. Additional component types could be composed by including SimpleComponent as an embedded type thereby acquiring all the methods of the embedded type, which could be overridden by the embedding component. Container types could be composed by embedding the ```Container``` type, which in turn embeds the SimpleComponent type.
 
+All components employ "optimistic concurrency control" by means of ETags (Entity Tags) serving as unique version identifiers for a component undergoing modification. Modifications to a component could be done via its REST endoint or by invoking its ```SendSyncMessage()``` API. Any client (REST client or API client) updating a component should include the ETag it received during a previous Read/Get operation. Updates to the component are only allowed if the included ETag matches with the current component ETag, to prevent conflicts and data inconsistencies arising due to concurrent modifications. The client is notified of any conflicts by rejecting the update request thereby indicating the client to undertake appropriate conflict resolution.
 <br/>
 
 ### Dynamic HTTP URI
