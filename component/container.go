@@ -31,7 +31,7 @@ func init() {
 	AttachComponent(true, rootContainer)
 
 	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGABRT, syscall.SIGUSR1)
 
 	go func() {
 		osSignal := <-signalCh
@@ -66,7 +66,10 @@ func init() {
 		for notification := range subscribe {
 			if notification == Stopped {
 				logger.Sugar().Info("exiting")
-				os.Exit(0)
+				// syscall.SIGUSR1 is used for testing
+				if osSignal != syscall.SIGUSR1 {
+					os.Exit(0)
+				}
 			}
 		}
 	}()
