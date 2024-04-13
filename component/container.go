@@ -45,8 +45,8 @@ func init() {
 		defer close(subscribe)
 		rootContainer.Subscribe("root.init", subscribe)
 
-		// proceed to shutdown top level components (including root container) if system interrupt is received.
-		for i := len(topLevelComponents) - 1; i >= 0; i-- {
+		// if system interrupt is received, proceed to shutdown all top level components except root container.
+		for i := len(topLevelComponents) - 1; i > 0; i-- {
 			nxtTopLvlComp := topLevelComponents[i]
 			logger.Info("sending SyncMessage", zap.String("container", rootContainer.GetName()), zap.String("component", nxtTopLvlComp.GetName()), zap.Any(string(ControlMsgType), Shutdown))
 			err := nxtTopLvlComp.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
@@ -54,6 +54,14 @@ func init() {
 				logger.Debug("SendSyncMessage", zap.String("container", rootContainer.GetName()), zap.String("component", nxtTopLvlComp.GetName()), zap.Any(string(ControlMsgType), Shutdown), zap.Bool("success", true))
 			}
 		}
+
+		// once all top level components are stopped, proceed to stop root container
+		go func() {
+			err := topLevelComponents[0].SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
+			if err == nil {
+				log.Println("Shutdown notification was successfully sent to", topLevelComponents[0])
+			}
+		}()
 
 		for notification := range subscribe {
 			if notification == Stopped {
