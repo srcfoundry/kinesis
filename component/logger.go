@@ -2,6 +2,8 @@ package component
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -31,8 +33,19 @@ func createLogger() *zap.Logger {
 	encoderCfg.TimeKey = "timestamp"
 	encoderCfg.EncodeTime = zapcore.RFC3339TimeEncoder
 
+	// check log level at initialization
+	var zapAtomicLvl zapcore.Level
+	logLvl := strings.ToLower(os.Getenv("KINESIS_LOG_LEVEL"))
+
+	switch logLvl {
+	case "debug":
+		zapAtomicLvl = zap.DebugLevel
+	default:
+		zapAtomicLvl = zap.InfoLevel
+	}
+
 	config := zap.Config{
-		Level:             zap.NewAtomicLevelAt(zap.InfoLevel),
+		Level:             zap.NewAtomicLevelAt(zapAtomicLvl),
 		Development:       false,
 		DisableCaller:     false,
 		DisableStacktrace: false,
