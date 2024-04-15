@@ -161,6 +161,9 @@ type Component interface {
 
 	SetAsNonRestEntity(bool)
 	IsNonRestEntity() bool
+
+	GetLogger() *zap.Logger
+	setLogger(*zap.Logger)
 }
 
 type SimpleComponent struct {
@@ -194,6 +197,8 @@ type SimpleComponent struct {
 
 	subscribers map[string]chan<- interface{}
 	callbacks   []func(context.Context, int, interface{})
+
+	logger *zap.Logger
 }
 
 func (d *SimpleComponent) GetName() string {
@@ -249,7 +254,7 @@ func (d *SimpleComponent) String() string {
 
 func (d *SimpleComponent) setStage(s stage) {
 	d.getstateTransitionLock().Lock()
-	logger.Debug("stage transition", zap.String("component", d.GetName()), zap.Any("stage", s))
+	d.GetLogger().Debug("stage transition", zap.Any("stage", s))
 	d.Stage = s
 	d.getstateTransitionLock().Unlock()
 
@@ -272,7 +277,7 @@ func (d *SimpleComponent) setState(s state) {
 	d.State = s
 
 	if d.State != prevState {
-		logger.Info("state transition", zap.String("component", d.GetName()), zap.Any("state", s))
+		d.GetLogger().Info("state transition", zap.Any("state", s))
 		d.invokeCallbacks(d.State)
 		d.notifySubscribers(d.State)
 	}
@@ -327,7 +332,7 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 	}
 
 	d.callbacks = append(d.callbacks[:cbIndx], d.callbacks[cbIndx+1:]...)
-	logger.Debug("removed callback function", zap.String("component", d.GetName()), zap.Int("index", cbIndx))
+	d.GetLogger().Debug("removed callback function", zap.Int("index", cbIndx))
 	return nil
 }
 
@@ -341,7 +346,7 @@ func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- inter
 	}
 
 	d.subscribers[subscriber] = subscriberCh
-	logger.Info("subscription", zap.String("component", d.GetName()), zap.String("subscriber", subscriber))
+	d.GetLogger().Info("subscription", zap.String("subscriber", subscriber))
 	return nil
 }
 
@@ -355,7 +360,7 @@ func (d *SimpleComponent) Unsubscribe(subscriber string) error {
 	}
 
 	delete(d.subscribers, subscriber)
-	logger.Info("unsubscription", zap.String("component", d.GetName()), zap.String("subscriber", subscriber))
+	d.GetLogger().Info("unsubscription", zap.String("subscriber", subscriber))
 	return nil
 }
 
@@ -382,9 +387,9 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 		<-ctx.Done()
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
-			logger.Info("callback exceeded notification deadline", zap.String("component", d.GetName()), zap.Int("index", cbIndx), zap.Any("notification", notification))
+			d.GetLogger().Info("callback exceeded notification deadline", zap.Int("index", cbIndx), zap.Any("notification", notification))
 		case context.Canceled:
-			logger.Debug("callback executed", zap.String("component", d.GetName()), zap.Int("index", cbIndx), zap.Any("notification", notification))
+			d.GetLogger().Debug("callback executed", zap.Int("index", cbIndx), zap.Any("notification", notification))
 		}
 	}
 }
@@ -557,6 +562,17 @@ func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	MarshallToHttpResponseWriter(w, comp)
+}
+
+func (d *SimpleComponent) GetLogger() *zap.Logger {
+	if d.logger != nil {
+		return d.logger
+	}
+	return logger
+}
+
+func (d *SimpleComponent) setLogger(logger *zap.Logger) {
+	d.logger = logger
 }
 
 // SetComponentEtag calculates the component hash and sets an Entity Tag(ETag) to indicate a version of the component.

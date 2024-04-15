@@ -7,12 +7,13 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"log"
 	"os"
 	"reflect"
 	"strconv"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const persistableTag = "persistable"
@@ -81,20 +82,22 @@ func (p *Persistence) Init(ctx context.Context) error {
 	// if starting for first time would have to drain the channel of remaining value before returning, to avoid memory leak
 	<-isAlreadyStarted
 
-	connCtx, connCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer connCancel()
-
 	dbConnStr := os.Getenv("KINESIS_DB_CONNECTION")
 	if len(dbConnStr) <= 0 {
-		log.Fatal("unable to read 'KINESIS_DB_CONNECTION' environment variable")
+		p.GetLogger().Fatal("unable to read 'KINESIS_DB_CONNECTION' environment variable")
 	}
 
 	encryptKey := os.Getenv("KINESIS_DB_SYMMETRIC_ENCRYPT_KEY")
 	if len(encryptKey) <= 0 {
-		log.Fatal("unable to read 'KINESIS_DB_SYMMETRIC_ENCRYPT_KEY' environment variable")
+		p.GetLogger().Fatal("unable to read 'KINESIS_DB_SYMMETRIC_ENCRYPT_KEY' environment variable")
 	}
 
 	p.symmetricEncryptKey = encryptKey
+
+	connCtx, connCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer connCancel()
+
+	connCtx = ContextWithLogger(connCtx, p.GetLogger())
 
 	connErr := p.DB.Connect(connCtx, dbConnStr)
 	if connErr != nil {
@@ -110,14 +113,17 @@ func (p *Persistence) Init(ctx context.Context) error {
 }
 
 func (p *Persistence) Stop(ctx context.Context) error {
-	return p.DB.Disconnect(context.Background(), nil)
+	ctx = ContextWithLogger(ctx, p.GetLogger())
+	return p.DB.Disconnect(ctx, nil)
 }
 
 func (p *Persistence) GetSymmetricKey() string {
 	return p.symmetricEncryptKey.(string)
 }
 
-func marshalType(encryptKey string, v reflect.Value, typeHierarchy string, pTypes *PTypes) {
+func marshalType(ctx context.Context, encryptKey string, v reflect.Value, typeHierarchy string, pTypes *PTypes) {
+	logger := LoggerFromContext(ctx)
+
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Type().Field(i)
 		value := v.Field(i)
@@ -132,16 +138,16 @@ func marshalType(encryptKey string, v reflect.Value, typeHierarchy string, pType
 		isEncrypted := false
 
 		if field.Type.Kind() == reflect.Struct {
-			marshalType(encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
+			marshalType(ctx, encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
 		} else if persistDirective, found := field.Tag.Lookup(persistableTag); found {
 			switch persistDirective {
 			case "encrypt":
 				if len(encryptKey) <= 0 {
-					log.Println("proceeding to persist", field.Type.Name(), "unencrypted, since encryptKey is missing")
+					logger.Info("proceeding to persist unencrypted, since encryptKey is missing", zap.String("field", field.Type.Name()))
 				} else {
 					encryptStr, err := encrypt(strValue, encryptKey)
 					if err != nil {
-						log.Println("proceeding to persist", field.Type.Name(), "unencrypted, since obtained error:", err, "while encrypting")
+						logger.Error("proceeding to persist unencrypted, since obtained error while encrypting", zap.String("field", field.Type.Name()), zap.Error(err))
 					} else if len(encryptStr) > 0 {
 						isEncrypted = true
 						strValue = encryptStr
@@ -154,7 +160,9 @@ func marshalType(encryptKey string, v reflect.Value, typeHierarchy string, pType
 	}
 }
 
-func unmarshalToType(encryptKey string, v reflect.Value, typeHierarchy string, pTypes map[string]PType) {
+func unmarshalToType(ctx context.Context, encryptKey string, v reflect.Value, typeHierarchy string, pTypes map[string]PType) {
+	logger := LoggerFromContext(ctx)
+
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Type().Field(i)
 		value := v.Field(i)
@@ -165,14 +173,14 @@ func unmarshalToType(encryptKey string, v reflect.Value, typeHierarchy string, p
 		}
 
 		if field.Type.Kind() == reflect.Struct {
-			unmarshalToType(encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
+			unmarshalToType(ctx, encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
 		} else if persistDirective, found := field.Tag.Lookup(persistableTag); found {
 			switch persistDirective {
 			case "native", "encrypt":
 				if pType, found := pTypes[field.Name]; found {
 					// check actual typeHierarchy matches with persisted typeHierarchy
 					if pType.TypeHierarchy != typeHierarchy {
-						log.Println("skipping unmarshalling", field.Name, "since actual typeHierarchy mismatches with persisted typeHierarchy")
+						logger.Info("skipping unmarshalling since actual typeHierarchy mismatches with persisted typeHierarchy", zap.String("field", field.Name))
 						continue
 					}
 
@@ -181,11 +189,11 @@ func unmarshalToType(encryptKey string, v reflect.Value, typeHierarchy string, p
 					// if encountering a persisted field value which was encrypted, proceed to decrypt the same
 					if pType.IsEncrypted {
 						if len(encryptKey) <= 0 {
-							log.Println("proceeding with unmarshalling despite encryptKey for decrypting persistable field", field.Type.Name(), "is empty")
+							logger.Info("proceeding with unmarshalling despite encryptKey for decrypting persistable field is empty", zap.String("field", field.Type.Name()))
 						} else {
 							decryptStr, err := decrypt(encryptKey, strValue)
 							if err != nil {
-								log.Println("obtained error:", err, "while decrypting", field.Type.Name())
+								logger.Error("obtained error while decrypting", zap.String("field", field.Type.Name()), zap.Error(err))
 							} else if len(decryptStr) > 0 {
 								strValue = decryptStr
 							}

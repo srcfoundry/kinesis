@@ -2,10 +2,10 @@ package kinesis
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/srcfoundry/kinesis/component"
+	"go.uber.org/zap"
 )
 
 type App struct {
@@ -18,8 +18,8 @@ func (a *App) PostInit(context.Context) error {
 	if len(a.LastExecutedDateTime) <= 0 {
 		a.LastExecutedDateTime = "--"
 	}
-	log.Printf("%s last executed on: %s\n", a, a.LastExecutedDateTime)
-	log.Printf("Number of times %s executed: %v\n", a, a.PreviousExecutions)
+	a.GetLogger().Info("last executed", zap.String("component", a.GetName()), zap.String("date/time", a.LastExecutedDateTime))
+	a.GetLogger().Info("number of times executed", zap.String("component", a.GetName()), zap.Int("executed", a.PreviousExecutions))
 	a.LastExecutedDateTime = time.Now().Format("January 02, 2006 15:04:05 PM")
 	a.PreviousExecutions++
 	return nil
