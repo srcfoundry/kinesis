@@ -82,6 +82,7 @@ Usage: ```env [environment variables] ./kinesis```
 environment variables options:
 - ```KINESIS_DB_CONNECTION : Database connection string if any of the Persistence build tags are used```
 - ```KINESIS_DB_SYMMETRIC_ENCRYPT_KEY : Encryption key to encrypt appropriately tagged component fields while persisting to database ```
+- ```KINESIS_LOG_LEVEL : Set Log level during app initialization. Option "debug" to enable debug logs. Default is set to "info" ```
 
 e.g.,  ```env KINESIS_DB_CONNECTION=file:///opt/database/kinesisDB  KINESIS_DB_SYMMETRIC_ENCRYPT_KEY=68gjh658jhg8tf ./kinesis```
 
