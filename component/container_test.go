@@ -638,3 +638,55 @@ func TestContainer_HandleInterrupt(t *testing.T) {
 	currProcess, _ := os.FindProcess(pid)
 	currProcess.Signal(syscall.SIGUSR1)
 }
+
+type TestInitiatedSimpleType struct {
+	SimpleComponent
+}
+
+type TestInitiatingSimpleType struct {
+	SimpleComponent
+}
+
+func (d *TestInitiatingSimpleType) PreStart(context.Context) error {
+	tc := new(TestInitiatedSimpleType)
+	tc.Name = "YetAnotherTestSimpleType"
+	return d.GetContainer().Add(tc)
+}
+
+func TestComponentInitiatingOtherComponent(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.Add(c)
+
+	type args struct {
+		comp Component
+	}
+
+	initiatingComponent := new(TestInitiatingSimpleType)
+	initiatingComponent.Name = "InitiatingComponent"
+
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			name: "SimpleComponent_HandleInterrupt",
+			args: args{
+				comp: initiatingComponent,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
+				t.Errorf("Container.Add() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+
+	shutdownTestContainer(c, 5*time.Second)
+}
