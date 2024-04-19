@@ -92,6 +92,10 @@ type Component interface {
 	// apply to the Init method, in terms of what all logic could be included, would be applicable to PostInit method as well.
 	PostInit(context.Context) error
 
+	// The PreStart stage is suitable for components that initiate other components, as it occurs after all prerequisites, such as converting to canonical form
+	// and container assignment, have been completed.
+	PreStart(context.Context) error
+
 	Start(context.Context) error
 	Stop(context.Context) error
 
@@ -401,15 +405,19 @@ func (d *SimpleComponent) notifySubscribers(notification interface{}) {
 }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
-// Refer proper guidelines for implementing the method within Component interface.
+// Refer notes within Component interface for implementing the method.
 func (d *SimpleComponent) Init(context.Context) error { return nil }
 
 // components which use Container as embedded type could override this method to have custom implementation.
-// Refer proper guidelines for implementing the method within Component interface.
+// Refer notes within Component interface for implementing the method.
 func (d *SimpleComponent) PostInit(context.Context) error { return nil }
 
+// components that initiate other components could override this method to have custom implementation.
+// Refer notes within Component interface for implementing the method.
+func (d *SimpleComponent) PreStart(context.Context) error { return nil }
+
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
-// Refer proper guidelines for implementing the method within Component interface.
+// Refer notes within Component interface for implementing the method.
 func (d *SimpleComponent) Start(context.Context) error {
 	inbox := d.getInbox()
 	if inbox == nil {
@@ -426,13 +434,13 @@ func (d *SimpleComponent) Start(context.Context) error {
 }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
-// Refer proper guidelines for implementing the method within Component interface.
+// Refer notes within Component interface for implementing the method.
 func (d *SimpleComponent) IsRestartableWithDelay() (bool, time.Duration) {
 	return false, 0 * time.Second
 }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
-// Refer proper guidelines for implementing the method within Component interface.
+// Refer notes within Component interface for implementing the method.
 func (d *SimpleComponent) Stop(context.Context) error { return nil }
 
 func (d *SimpleComponent) setContainer(c *Container) {

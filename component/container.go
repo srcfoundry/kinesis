@@ -272,7 +272,6 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 			}
 		}
 
-		// TODO: test for init new component from within init of a component
 		err := comp.Init(ctx)
 		if err != nil {
 			comp.setStage(Aborting)
@@ -287,6 +286,13 @@ func (c *Container) componentLifecycleFSM(ctx context.Context, comp Component) e
 		}
 		comp.setStage(Initialized)
 	case Initialized, Restarting:
+		// PreStart is initiated in a separate goroutine to ensure that startComponent proceeds even if an error occurs during prestart
+		go func() {
+			err := comp.PreStart(ctx)
+			if err != nil {
+				c.GetLogger().Error("error during prestart", zap.String("component", comp.GetName()), zap.Error(err))
+			}
+		}()
 		comp.setStage(Starting)
 		ctx := context.Background()
 		go c.startComponent(ctx, comp)
