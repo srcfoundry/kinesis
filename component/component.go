@@ -103,7 +103,16 @@ type Component interface {
 	//
 	// msgType could be used by Components' to define its own set of message types. Used in conjunction with msgsLookup in determining the
 	// message type associated to the MsgType, and invoking the appropriate handler function registered to process the message type.
+	//
+	// If handler functions are not registered for specific message types, all messages would be forwarded to the DefaultSyncMessageHandler.
 	SendSyncMessage(timeout time.Duration, msgType interface{}, msgsLookup map[interface{}]interface{}) error
+
+	// To set blocking message handler functions for any message types. Components could define its own message types.
+	SetSyncMessageHandler(msgType interface{}, msgTypeHandler func(context.Context, interface{}) error)
+	getSyncMessageHandler(msgType interface{}) func(context.Context, interface{}) error
+
+	// DefaultSyncMessageHandler is a blocking call which synchronously handles all messages except ControMsgType types. Messages gets routed by invoking SendSyncMessage.
+	DefaultSyncMessageHandler(context.Context, interface{}) error
 
 	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
 	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
@@ -115,26 +124,14 @@ type Component interface {
 	// de-register the callback function.
 	// Callback functions could be registered in this manner, thereby maintaining order of execution to process a notification across components.
 	Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error
-
 	RemoveCallback(cbIndx int) error
+	invokeCallbacks(notification interface{})
 
 	// Subscribers could pass a channel to receive state/stage notifications of components it might be interested.
 	// Note that the callback functions registered using the Callback method would be sent notifications prior to any subscribers.
 	Subscribe(subscriber string, subscriberCh chan<- interface{}) error
-
 	Unsubscribe(subscriber string) error
-
-	// A component could assign a channel by which it could receive contexed messages/notifications wrapped as a function. The component would continue to
-	// receive messages until the returned notification channel is closed.
-	SetInbox(chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error)
-	getInbox() chan func() (context.Context, interface{}, chan<- error)
-
-	// To set blocking message handler functions for any message types. Components could define its own message types.
-	SetSyncMessageHandler(msgType interface{}, msgTypeHandler func(context.Context, interface{}) error)
-	getSyncMessageHandler(msgType interface{}) func(context.Context, interface{}) error
-
-	// DefaultSyncMessageHandler is a blocking call which synchronously handles all messages except ControMsgType types. Messages gets routed by invoking SendSyncMessage.
-	DefaultSyncMessageHandler(context.Context, interface{}) error
+	notifySubscribers(notification interface{})
 
 	getMmux() chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error)
 
@@ -187,7 +184,6 @@ type SimpleComponent struct {
 	mmux            chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error)
 	messageHandlers map[interface{}]func(context.Context, interface{}) error
 
-	inbox              chan func() (context.Context, interface{}, chan<- error)
 	isMessagingStopped chan struct{}
 	// mutatingLock maintained as generic type to prevent direct access to RWMutex and to use the getMutatingLock() method instead
 	mutatingLock interface{} `json:"-" hash:"ignore"`
@@ -419,16 +415,18 @@ func (d *SimpleComponent) PreStart(context.Context) error { return nil }
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
 // Refer notes within Component interface for implementing the method.
 func (d *SimpleComponent) Start(context.Context) error {
-	inbox := d.getInbox()
-	if inbox == nil {
-		return nil
-	}
+	// inbox := d.getInbox()
+	// if inbox == nil {
+	// 	return nil
+	// }
 
-	for msgFunc := range inbox {
-		// process msgFunc
-		_, msg, _ := msgFunc()
-		fmt.Println(msg)
-	}
+	// logger := d.GetLogger()
+
+	// for msgFunc := range inbox {
+	// 	// process msgFunc
+	// 	_, msg, _ := msgFunc()
+	// 	logger.Debug("inbox received message", zap.Any("msg", msg))
+	// }
 
 	return nil
 }
@@ -455,25 +453,6 @@ func (d *SimpleComponent) GetContainer() *Container {
 
 func (d *SimpleComponent) getMmux() chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error) {
 	return d.mmux
-}
-
-func (d *SimpleComponent) SetInbox(inbox chan func() (context.Context, interface{}, chan<- error)) (<-chan struct{}, error) {
-	if inbox == nil {
-		return nil, fmt.Errorf("%v SetInbox was passed an empty messaging channel", d.GetName())
-	}
-
-	d.inbox = inbox
-
-	// close any existing message stop channel before creating one
-	if d.isMessagingStopped != nil {
-		close(d.isMessagingStopped)
-	}
-	d.isMessagingStopped = make(chan struct{})
-	return d.isMessagingStopped, nil
-}
-
-func (d *SimpleComponent) getInbox() chan func() (context.Context, interface{}, chan<- error) {
-	return d.inbox
 }
 
 func (d *SimpleComponent) SetSyncMessageHandler(msgType interface{}, msgTypeHandler func(context.Context, interface{}) error) {
@@ -583,10 +562,10 @@ func (d *SimpleComponent) setLogger(logger *zap.Logger) {
 	d.logger = logger
 }
 
-// SetComponentEtag calculates the component hash and sets an Entity Tag(ETag) to indicate a version of the component.
+// UpdateComponentEtag calculates the component hash and sets an Entity Tag(ETag) to indicate a version of the component.
 // this function is not thread safe. caller should ensure that the function is called within a critical section or
 // call hiearchy traces back to one.
-func SetComponentEtag(comp Component) error {
+func UpdateComponentEtag(comp Component) error {
 	// compute hash of the component object and compare with existing hash
 	newHash, err := hashstructure.Hash(comp, hashstructure.FormatV2, nil)
 	if err != nil {
@@ -606,7 +585,7 @@ func SetComponentEtag(comp Component) error {
 // createCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
 // is called within a critical section or call hiearchy traces back to one.
 func createCopy(comp Component) (Component, error) {
-	SetComponentEtag(comp)
+	UpdateComponentEtag(comp)
 	cCopy := deepcopy.Copy(comp)
 	return cCopy.(Component), nil
 }

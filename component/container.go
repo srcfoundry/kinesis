@@ -425,7 +425,21 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 		// if persistence add-on is enabled, persist the resulting state of the component after message processing
 		if rootContainer != nil && rootContainer.persistence != nil {
 			err = rootContainer.persist(msgCtx, comp)
+			if err != nil {
+				errCh <- err
+				continue
+			}
 		}
+
+		cCopy, err := createCopy(comp)
+		if err != nil {
+			errCh <- err
+			continue
+		}
+
+		comp.invokeCallbacks(cCopy)
+		comp.notifySubscribers(cCopy)
+
 		errCh <- err
 	}
 }
@@ -719,7 +733,7 @@ func stateChangeCallbacker(comp Component) func(context.Context, int, interface{
 		switch notification {
 		case Active, Inactive:
 			comp.GetLogger().Debug("proceeding to set new ETag")
-			SetComponentEtag(comp)
+			UpdateComponentEtag(comp)
 		case Stopping:
 			err := comp.RemoveCallback(cbIndx)
 			if err != nil {
