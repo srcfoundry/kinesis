@@ -5,8 +5,11 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"strconv"
@@ -14,6 +17,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/crypto/scrypt"
 )
 
 const persistableTag = "persistable"
@@ -92,7 +96,18 @@ func (p *Persistence) Init(ctx context.Context) error {
 		p.GetLogger().Fatal("unable to read 'KINESIS_DB_SYMMETRIC_ENCRYPT_KEY' environment variable")
 	}
 
-	p.symmetricEncryptKey = encryptKey
+	// generate a salt from the provided key
+	hash := sha256.New()
+	hash.Write([]byte(encryptKey))
+	salt := hash.Sum(nil)
+
+	// Generate a strong cipher key from the encryptKey using scrypt
+	cipherKey, err := scrypt.Key([]byte(encryptKey), salt, 16384, 8, 1, 16)
+	if err != nil {
+		p.GetLogger().Fatal("error generating cipher key", zap.Error(err))
+	}
+
+	p.symmetricEncryptKey = fmt.Sprintf("%x", cipherKey)
 
 	connCtx, connCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer connCancel()
@@ -117,7 +132,7 @@ func (p *Persistence) Stop(ctx context.Context) error {
 	return p.DB.Disconnect(ctx, nil)
 }
 
-func (p *Persistence) GetSymmetricKey() string {
+func (p *Persistence) getSymmetricKey() string {
 	return p.symmetricEncryptKey.(string)
 }
 
@@ -133,9 +148,12 @@ func marshalType(ctx context.Context, encryptKey string, v reflect.Value, typeHi
 			continue
 		}
 
-		var pType PType
 		strValue := fmt.Sprintf("%v", value)
 		isEncrypted := false
+		var (
+			pType PType
+			err   error
+		)
 
 		if field.Type.Kind() == reflect.Struct {
 			marshalType(ctx, encryptKey, value, typeHierarchy+"."+field.Type.Name(), pTypes)
@@ -145,12 +163,11 @@ func marshalType(ctx context.Context, encryptKey string, v reflect.Value, typeHi
 				if len(encryptKey) <= 0 {
 					logger.Info("proceeding to persist unencrypted, since encryptKey is missing", zap.String("field", field.Type.Name()))
 				} else {
-					encryptStr, err := encrypt(strValue, encryptKey)
+					strValue, err = encrypt(encryptKey, strValue)
 					if err != nil {
 						logger.Error("proceeding to persist unencrypted, since obtained error while encrypting", zap.String("field", field.Type.Name()), zap.Error(err))
-					} else if len(encryptStr) > 0 {
+					} else {
 						isEncrypted = true
-						strValue = encryptStr
 					}
 				}
 			}
@@ -219,53 +236,75 @@ func unmarshalToType(ctx context.Context, encryptKey string, v reflect.Value, ty
 	} // end for i := 0;
 }
 
-func encrypt(plaintext, secretKey string) (string, error) {
-	aes, err := aes.NewCipher([]byte(secretKey))
+// reference: https://pkg.go.dev/crypto/cipher#example-NewGCM-Encrypt
+func encrypt(cipherKey string, plaintext string) (string, error) {
+	if len(cipherKey) <= 0 {
+		return plaintext, fmt.Errorf("encryption cipher key is empty")
+	}
+
+	cipherKeyBytes, err := hex.DecodeString(cipherKey)
 	if err != nil {
 		return plaintext, err
 	}
 
-	gcm, err := cipher.NewGCM(aes)
+	block, err := aes.NewCipher(cipherKeyBytes)
 	if err != nil {
 		return plaintext, err
 	}
 
-	// We need a 12-byte nonce for GCM (modifiable if you use cipher.NewGCMWithNonceSize())
-	// A nonce should always be randomly generated for every encryption.
-	nonce := make([]byte, gcm.NonceSize())
-	_, err = rand.Read(nonce)
+	// Never use more than 2^32 random nonces with a given key because of the risk of a repeat.
+	nonce := make([]byte, 12)
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return plaintext, err
+	}
+
+	aesgcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return plaintext, err
 	}
 
-	// ciphertext here is actually nonce+ciphertext
-	// So that when we decrypt, just knowing the nonce size
-	// is enough to separate it from the ciphertext.
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+	ciphertext := aesgcm.Seal(nil, nonce, []byte(plaintext), nil)
 
-	return string(ciphertext), nil
+	// encrypted string is nonce concatenated with ciphertext
+	encryptedString := fmt.Sprintf("%x%x", nonce, ciphertext)
+	return encryptedString, nil
 }
 
-func decrypt(ciphertext, secretKey string) (string, error) {
-	aes, err := aes.NewCipher([]byte(secretKey))
+// reference: https://pkg.go.dev/crypto/cipher#example-NewGCM-Decrypt
+func decrypt(cipherKey string, encryptedText string) (string, error) {
+	if len(cipherKey) <= 0 {
+		return "", fmt.Errorf("encryption cipher key is empty")
+	}
+
+	cipherKeyBytes, err := hex.DecodeString(cipherKey)
 	if err != nil {
 		return "", err
 	}
 
-	gcm, err := cipher.NewGCM(aes)
+	// extract nonce & ciphertext from encrypted string
+	nonce, err := hex.DecodeString(encryptedText[:24])
+	if err != nil {
+		return "", err
+	}
+	ciphertext, err := hex.DecodeString(encryptedText[24:])
 	if err != nil {
 		return "", err
 	}
 
-	// Since we know the ciphertext is actually nonce+ciphertext
-	// And len(nonce) == NonceSize(). We can separate the two.
-	nonceSize := gcm.NonceSize()
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-
-	plaintext, err := gcm.Open(nil, []byte(nonce), []byte(ciphertext), nil)
+	block, err := aes.NewCipher(cipherKeyBytes)
 	if err != nil {
 		return "", err
 	}
 
-	return string(plaintext), nil
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	plaintextBytes, err := aesgcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintextBytes), nil
 }

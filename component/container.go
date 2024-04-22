@@ -436,7 +436,7 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 		return fmt.Errorf("%s does not have persistence add-on enabled", c)
 	}
 
-	pTypes := c.persistable(comp, c.persistence.GetSymmetricKey())
+	pTypes := c.persistable(comp, c.persistence.getSymmetricKey())
 	if len(pTypes) <= 0 {
 		c.GetLogger().Debug("unable to find any persistable fields", zap.String("component", comp.GetName()))
 		return nil
@@ -498,7 +498,7 @@ func (c *Container) load(ctx context.Context, comp Component) error {
 	actualValue := reflect.Indirect(cValue)
 
 	ctx = ContextWithLogger(ctx, comp.GetLogger())
-	unmarshalToType(ctx, c.persistence.GetSymmetricKey(), actualValue, actualValue.Type().Name(), pTypeMap)
+	unmarshalToType(ctx, c.persistence.getSymmetricKey(), actualValue, actualValue.Type().Name(), pTypeMap)
 	return nil
 }
 
