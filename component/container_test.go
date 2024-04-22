@@ -514,10 +514,6 @@ func TestContainer_Persistence(t *testing.T) {
 	c.Add(&tc1)
 
 	_ = tc1.SendSyncMessage(5*time.Second, ControlMsgType, map[interface{}]interface{}{ControlMsgType: Shutdown})
-	// if err != nil {
-	// 	t.Error(err)
-	// 	t.Fail()
-	// }
 
 	tc2 := TestPersistComponent{}
 	tc2.Name = "TestPersist"
@@ -528,11 +524,11 @@ func TestContainer_Persistence(t *testing.T) {
 	}
 
 	if tc2.String1 != tc1.String1 {
-		t.Errorf("TestContainer_Persistence TestPersistComponent observed String1 = %v, want %v", tc2.String1, tc2.String1)
+		t.Errorf("TestContainer_Persistence TestPersistComponent observed String1 = %v, want %v", tc2.String1, tc1.String1)
 	}
 
-	if tc2.String1 != tc1.String1 {
-		t.Errorf("TestContainer_Persistence TestPersistComponent observed Int1 = %v, want %v", tc2.Int1, tc2.Int1)
+	if tc2.Int1 != tc1.Int1 {
+		t.Errorf("TestContainer_Persistence TestPersistComponent observed Int1 = %v, want %v", tc2.Int1, tc1.Int1)
 	}
 
 	shutdownTestContainer(c, 2*time.Second)
