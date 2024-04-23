@@ -59,6 +59,8 @@ const (
 const (
 	EnablePeerMessaging controlMsg = iota
 	DisablePeerMessaging
+	NotifyPeers
+	Persist
 	Restart
 	RestartAfter
 	RestartMmux
@@ -99,12 +101,14 @@ type Component interface {
 	Start(context.Context) error
 	Stop(context.Context) error
 
-	// SendSyncMessage could be used to synchronously send any type of message to a component.
-	//
+	// SendSyncMessage is a blocking call for sending any type of message/s to a component.
 	// msgType could be used by Components' to define its own set of message types. Used in conjunction with msgsLookup in determining the
 	// message type associated to the MsgType, and invoking the appropriate handler function registered to process the message type.
-	//
 	// If handler functions are not registered for specific message types, all messages would be forwarded to the DefaultSyncMessageHandler.
+	// Message types could be batched as a slice to process the messages in-order, thereby facilitating atomic transaction processing.
+	//
+	// Changes made to component fields outside of expected channels or methods could be persisted (if persistence addon is enabled), by sending
+	// a "ControlMsgType:Persist" message. In the same way out-of-band component changes could be notified to subscribers by sending "ControlMsgType:NotifyPeers" message
 	SendSyncMessage(timeout time.Duration, msgType interface{}, msgsLookup map[interface{}]interface{}) error
 
 	// To set blocking message handler functions for any message types. Components could define its own message types.
@@ -414,22 +418,7 @@ func (d *SimpleComponent) PreStart(context.Context) error { return nil }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
 // Refer notes within Component interface for implementing the method.
-func (d *SimpleComponent) Start(context.Context) error {
-	// inbox := d.getInbox()
-	// if inbox == nil {
-	// 	return nil
-	// }
-
-	// logger := d.GetLogger()
-
-	// for msgFunc := range inbox {
-	// 	// process msgFunc
-	// 	_, msg, _ := msgFunc()
-	// 	logger.Debug("inbox received message", zap.Any("msg", msg))
-	// }
-
-	return nil
-}
+func (d *SimpleComponent) Start(context.Context) error { return nil }
 
 // components which use SimpleComponent as embedded type could override this method to have custom implementation.
 // Refer notes within Component interface for implementing the method.

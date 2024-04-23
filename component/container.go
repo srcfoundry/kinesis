@@ -391,6 +391,10 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 				}
 				errCh <- err
 				return
+			case Persist:
+				goto persistComponent
+			case NotifyPeers:
+				goto notifyListeners
 			}
 		case ComponentMsgType:
 			switch msg.(Component).GetName() {
@@ -404,42 +408,47 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 						continue
 					}
 				}
-				goto forwardMessage
+				goto handleMessage
 			default:
-				goto forwardMessage
+				goto handleMessage
 			}
 		}
 
-	forwardMessage:
-		handler := comp.getSyncMessageHandler(msgType)
-		if handler == nil {
-			c.GetLogger().Debug("passing message to default message handler", zap.String("component", comp.GetName()), zap.Any("msgType", msgType))
-			handler = comp.getSyncMessageHandler(comp.GetName())
-		}
-		err = handler(msgCtx, msg)
-		if err != nil {
-			errCh <- err
-			continue
-		}
-
-		// if persistence add-on is enabled, persist the resulting state of the component after message processing
-		if rootContainer != nil && rootContainer.persistence != nil {
-			err = rootContainer.persist(msgCtx, comp)
+	handleMessage:
+		{
+			handler := comp.getSyncMessageHandler(msgType)
+			if handler == nil {
+				c.GetLogger().Debug("passing message to default message handler", zap.String("component", comp.GetName()), zap.Any("msgType", msgType))
+				handler = comp.getSyncMessageHandler(comp.GetName())
+			}
+			err = handler(msgCtx, msg)
 			if err != nil {
 				errCh <- err
 				continue
 			}
 		}
-
-		cCopy, err := createCopy(comp)
-		if err != nil {
-			errCh <- err
-			continue
+	persistComponent:
+		{
+			// if persistence add-on is enabled, persist the resulting state of the component after message processing
+			if rootContainer != nil && rootContainer.persistence != nil {
+				err = rootContainer.persist(msgCtx, comp)
+				if err != nil {
+					errCh <- err
+					continue
+				}
+			}
 		}
+	notifyListeners:
+		{
+			cCopy, err := createCopy(comp)
+			if err != nil {
+				errCh <- err
+				continue
+			}
 
-		comp.invokeCallbacks(cCopy)
-		comp.notifySubscribers(cCopy)
-
+			comp.invokeCallbacks(cCopy)
+			comp.notifySubscribers(cCopy)
+		}
 		errCh <- err
 	}
 }
