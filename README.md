@@ -31,6 +31,14 @@ The ```SimpleComponent``` type implements all the methods within a Component int
 All components employ "optimistic concurrency control" by means of ETags (Entity Tags) serving as unique version identifiers for a component undergoing modification. Modifications to a component could be done via its REST endoint or by invoking its ```SendSyncMessage()``` API. Any client (REST client or API client) updating a component should include the ETag it received during a previous Read/Get operation. Updates to the component are only allowed if the included ETag matches with the current component ETag, to prevent conflicts and data inconsistencies arising due to concurrent modifications. The client is notified of any conflicts by rejecting the update request thereby indicating the client to undertake appropriate conflict resolution.
 <br/>
 
+### Concurrency control & Transaction guarantee
+Measures are put in place such that updates could be applied sequentially and in-order, leading to a consistent final state of a component. 
+Components could sign up for updates happening to other components by subscribing to the intended component/s or by means of registering a Callback function. Upon which the signed up component would receive immutable copies of the target component, as a message. This ensures that updates could be applied serially by multiple concurrent threads.
+
+Transaction guarantee for is made possible for ```SendSyncMessage()``` function, by message types which could be batched as a slice to process the messages in-order, thereby facilitating atomic transaction processing.
+  
+<br/>
+
 ### Dynamic HTTP URI
 The framework dynamically creates HTTP URIs' for all exported methods within a component, which resemble an HTTP handler function ```func (w http.ResponseWriter, r *http.Request)```. At the time of initializing a component, HTTP URIs' are derived from the component type and added to a HTTP handler map, maintained within the root container, for purpose of forwarding HTTP requests. Corresponding HTTP handler entries are removed in the event a component is being stopped and teared down. 
 
