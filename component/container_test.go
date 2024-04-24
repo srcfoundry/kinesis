@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"reflect"
 	"strings"
@@ -680,6 +681,92 @@ func TestComponentInitiatingOtherComponent(t *testing.T) {
 
 			if err := c.Add(tt.args.comp); (err != nil) != tt.wantErr {
 				t.Errorf("Container.Add() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+
+	shutdownTestContainer(c, 5*time.Second)
+}
+
+type TestCallingSimpleType struct {
+	SimpleComponent
+	RandomNonce int
+}
+
+type TestCallerSimpleType struct {
+	SimpleComponent
+	callBackIndx    int
+	randomNonce     int
+	callbackInvoked bool
+}
+
+func (t *TestCallerSimpleType) testCallback(ctx context.Context, cbIndx int, notification interface{}) {
+	//assign to callBackIndx, so that it could be removed later
+	t.callBackIndx = cbIndx
+	// check if callback obtained copy of TestCallingSimpleType.RandomNonce == what had been passed
+	if sType, ok := notification.(*TestCallingSimpleType); ok && sType.RandomNonce == t.randomNonce {
+		t.callbackInvoked = true
+	}
+}
+
+func (t *TestCallerSimpleType) IsCallbackInvoked() bool {
+	return t.callbackInvoked
+}
+
+func TestComponentNotifyCallbackListeners(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.Add(c)
+
+	type args struct {
+		duration   time.Duration
+		msgType    interface{}
+		msgsLookup map[interface{}]interface{}
+	}
+
+	randomNonce := rand.Intn(1000)
+
+	cc1 := new(TestCallingSimpleType)
+	cc1.Name = "CallingComponent"
+	cc1.RandomNonce = randomNonce
+	c.Add(cc1)
+
+	cc2 := new(TestCallerSimpleType)
+	cc2.Name = "CallerComponent"
+	cc2.randomNonce = randomNonce
+	c.Add(cc2)
+
+	// register cc2 for callback from cc1
+	cc1.Callback(false, cc2.testCallback)
+
+	tests := []struct {
+		name              string
+		args              args
+		wantErr           bool
+		isCallbackSuccess bool
+	}{
+		{
+			name: "SimpleComponent_NotifyCallbackListeners",
+			args: args{
+				duration:   2 * time.Second,
+				msgType:    ControlMsgType,
+				msgsLookup: map[interface{}]interface{}{ControlMsgType: NotifyPeers},
+			},
+			wantErr:           false,
+			isCallbackSuccess: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := cc1.SendSyncMessage(tt.args.duration, tt.args.msgType, tt.args.msgsLookup); (err != nil) != tt.wantErr {
+				t.Errorf("cc1.SendSyncMessage error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			cc1.RemoveCallback(cc2.callBackIndx)
+
+			if tt.isCallbackSuccess != cc2.IsCallbackInvoked() {
+				t.Errorf("cc2.IsCallbackInvoked observed Incc2.IsCallbackInvoked() = %v, want %v", cc2.IsCallbackInvoked(), tt.isCallbackSuccess)
 			}
 		})
 	}
