@@ -23,6 +23,7 @@ Each component gets to implement its own logic within each lifecycle stage, name
 Depending on the stimuli received, a component has the flexibility to alter its own state at any lifecycle stages, but at the same time is also subject to change by the encompassing container. For e.g just when a component is processing an event stimuli or message which alters its state, the root container would have received a system interrupt to shutdown all the components under it. So at any point in time, a component state is being determined by 2 or more separate goroutines which are concurrently being executed in different contexts.
 
 Add-on components such as an 'HTTP server' or 'Persistence' can be selectively included and activated by applying the appropriate Golang build tags during the build or 'go run' execution.
+
 <br/>
 
 ### Component design
@@ -36,7 +37,6 @@ Measures are put in place such that updates could be applied sequentially and in
 Components could sign up for updates happening to other components by subscribing to the intended component/s or by means of registering a Callback function. Upon which the signed up component would receive immutable copies of the target component, as a message. This ensures that updates could be applied serially by multiple concurrent threads.
 
 Transaction guarantee for is made possible for ```SendSyncMessage()``` function, by message types which could be batched as a slice to process the messages in-order, thereby facilitating atomic transaction processing.
-  
 <br/>
 
 ### Dynamic HTTP URI
