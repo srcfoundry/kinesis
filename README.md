@@ -36,7 +36,7 @@ All components employ "optimistic concurrency control" by means of ETags (Entity
 Measures are put in place such that updates could be applied sequentially and in-order, leading to a consistent final state of a component. 
 Components could sign up for updates happening to other components by subscribing to the intended component/s or by means of registering a Callback function. Upon which the signed up component would receive immutable copies of the target component, as a message. This ensures that updates could be applied serially by multiple concurrent threads.
 
-Transaction guarantee for is made possible for ```SendSyncMessage()``` function, by message types which could be batched as a slice to process the messages in-order, thereby facilitating atomic transaction processing.
+Transaction guarantee is made possible for ```SendSyncMessage()``` function, by message types which could be batched as a slice to process the messages in-order, thereby facilitating atomic transaction processing.
 <br/>
 
 ### Dynamic HTTP URI
