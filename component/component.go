@@ -524,7 +524,7 @@ func (d *SimpleComponent) SendSyncMessage(timeout time.Duration, msgType interfa
 func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var comp Component
 
-	// if requested URI path suffix does not match component URI, then return http.StatusNotFound
+	// if requested URI path prefix does not match component URI, then return http.StatusNotFound
 	if r.URL.Path != d.GetURI() {
 		http.NotFound(w, r)
 		return
@@ -572,7 +572,7 @@ func UpdateComponentEtag(comp Component) error {
 }
 
 // createCopy returns copy of component passed. this function is not thread safe. caller should ensure that the function
-// is called within a critical section or call hiearchy traces back to one.
+// is called within a critical section or call hierarchy traces back to one.
 func createCopy(comp Component) (Component, error) {
 	UpdateComponentEtag(comp)
 	cCopy := deepcopy.Copy(comp)
