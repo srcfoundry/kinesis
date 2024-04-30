@@ -15,7 +15,7 @@ import (
 )
 
 func shutdownTestContainer(c *Container, delay time.Duration) {
-	subscribe, errCh := make(chan interface{}, 1), make(chan error, 1)
+	subscribe, errCh := make(chan ChangeObject, 1), make(chan error, 1)
 	c.Subscribe("testS", subscribe)
 
 	go func() {
@@ -28,8 +28,11 @@ outer:
 	for {
 		select {
 		case notification := <-subscribe:
-			if notification == Stopped {
-				break outer
+			switch changeObj := notification.(type) {
+			case StageChangeObject:
+				if changeObj.GetCurrentObject() == Stopped {
+					break outer
+				}
 			}
 		case err := <-errCh:
 			fmt.Println("obtained error", err)
@@ -700,12 +703,15 @@ type TestCallerSimpleType struct {
 	callbackInvoked bool
 }
 
-func (t *TestCallerSimpleType) testCallback(ctx context.Context, cbIndx int, notification interface{}) {
+func (t *TestCallerSimpleType) testCallback(ctx context.Context, cbIndx int, notification ChangeObject) {
 	//assign to callBackIndx, so that it could be removed later
 	t.callBackIndx = cbIndx
 	// check if callback obtained copy of TestCallingSimpleType.RandomNonce == what had been passed
-	if sType, ok := notification.(*TestCallingSimpleType); ok && sType.RandomNonce == t.randomNonce {
-		t.callbackInvoked = true
+	switch changeType := notification.(type) {
+	case ComponentChangeObject:
+		if sType, ok := changeType.GetCurrentObject().(*TestCallingSimpleType); ok && sType.RandomNonce == t.randomNonce {
+			t.callbackInvoked = true
+		}
 	}
 }
 
@@ -771,5 +777,119 @@ func TestComponentNotifyCallbackListeners(t *testing.T) {
 		})
 	}
 
+	shutdownTestContainer(c, 5*time.Second)
+}
+
+type TestCallerVersionCheckSimpleType struct {
+	SimpleComponent
+	callBackIndx    int
+	prevRandomNonce int
+	currRandomNonce int
+	callbackInvoked bool
+}
+
+func (t *TestCallerVersionCheckSimpleType) testCallback(ctx context.Context, cbIndx int, notification ChangeObject) {
+	//assign to callBackIndx, so that it could be removed later
+	t.callBackIndx = cbIndx
+	// check if callback obtained copy of TestCallingSimpleType.RandomNonce == what had been passed
+	switch changeType := notification.(type) {
+	case ComponentChangeObject:
+		sTypePrev, ok1 := changeType.GetPreviousObject().(*TestCallingSimpleType)
+		if !ok1 {
+			return
+		}
+		sTypeCurrent, ok2 := changeType.GetCurrentObject().(*TestCallingSimpleType)
+		if !ok2 {
+			return
+		}
+		if sTypePrev.RandomNonce == t.prevRandomNonce && sTypeCurrent.RandomNonce == t.currRandomNonce {
+			t.callbackInvoked = true
+		}
+	}
+}
+
+func (t *TestCallerVersionCheckSimpleType) IsCallbackInvoked() bool {
+	return t.callbackInvoked
+}
+func TestNotifyCallbackListenersWithVersionedObject(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.Add(c)
+
+	type args struct {
+		duration   time.Duration
+		msgType    interface{}
+		msgsLookup map[interface{}]interface{}
+	}
+
+	cc1 := new(TestCallingSimpleType)
+	cc1.Name = "CallingComponent"
+	c.Add(cc1)
+
+	cc2 := new(TestCallerVersionCheckSimpleType)
+	cc2.Name = "CallerComponent"
+	c.Add(cc2)
+
+	// register cc2 for callback from cc1
+	cc1.Callback(false, cc2.testCallback)
+
+	tests := []struct {
+		name              string
+		args              args
+		wantErr           bool
+		isCallbackSuccess bool
+	}{
+		{
+			name: "SimpleComponent_NotifyCallbackListeners_with_init_versioned_object",
+			args: args{
+				duration:   2 * time.Second,
+				msgType:    ControlMsgType,
+				msgsLookup: map[interface{}]interface{}{ControlMsgType: NotifyPeers},
+			},
+			wantErr:           false,
+			isCallbackSuccess: true,
+		},
+		{
+			name: "SimpleComponent_NotifyCallbackListeners_with_init_versioned_object",
+			args: args{
+				duration:   2 * time.Second,
+				msgType:    ControlMsgType,
+				msgsLookup: map[interface{}]interface{}{ControlMsgType: NotifyPeers},
+			},
+			wantErr:           false,
+			isCallbackSuccess: true,
+		},
+	}
+
+	// assign nonce to cc1
+	randomNonce := rand.Intn(1000)
+	cc1.RandomNonce = randomNonce
+
+	// init cc2 prevRandomNonce to cc1's nonce
+	cc2.prevRandomNonce = cc1.RandomNonce
+	cc2.currRandomNonce = cc1.RandomNonce
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			if err := cc1.SendSyncMessage(tt.args.duration, tt.args.msgType, tt.args.msgsLookup); (err != nil) != tt.wantErr {
+				t.Errorf("cc1.SendSyncMessage error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.isCallbackSuccess != cc2.IsCallbackInvoked() {
+				t.Errorf("cc2.IsCallbackInvoked observed Incc2.IsCallbackInvoked() = %v, want %v", cc2.IsCallbackInvoked(), tt.isCallbackSuccess)
+			}
+
+			// reset for next test case
+			tt.isCallbackSuccess = false
+			cc2.prevRandomNonce = cc1.RandomNonce
+
+			randomNonce := rand.Intn(1000)
+			cc1.RandomNonce = randomNonce
+			cc2.currRandomNonce = cc1.RandomNonce
+		})
+	}
+
+	cc1.RemoveCallback(cc2.callBackIndx)
 	shutdownTestContainer(c, 5*time.Second)
 }

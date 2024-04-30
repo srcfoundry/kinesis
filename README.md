@@ -34,7 +34,7 @@ All components employ "optimistic concurrency control" by means of ETags (Entity
 
 ### Concurrency control & Transaction guarantee
 Measures are put in place such that updates could be applied sequentially and in-order, leading to a consistent final state of a component. 
-Components could sign up for updates happening to other components by subscribing (using ```Subscribe()``` method) to the intended component/s or by means of registering a ```Callback()``` function. Upon which the signed up component would receive immutable copies of the target component, as a message. This ensures that updates could be applied serially by multiple concurrent threads.
+Components could sign up for updates happening to other components by subscribing (using ```Subscribe()``` method) to the intended component/s or by means of registering a ```Callback()``` function. Update notifications could be State, Stage or copies of other Components, encapsulated as ```ChangeObjects```. ```ChangeObjects``` represents both the previous and current updates as immutable copies. This ensures that updates could be applied serially by multiple concurrent threads.
 
 Any messages sent within ```SendSyncMessage()``` gets forwarded to the component's message multiplexer (mmux), routing it to any of its message handlers, in the order it was received, and/or gets published to any listeners which have signed up. ```SendSyncMessage()``` callers could ensure atomic transaction guarantees by batching message types into a slice for processing messages in-order. 
 <br/>

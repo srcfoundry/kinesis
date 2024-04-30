@@ -118,24 +118,26 @@ type Component interface {
 	// DefaultSyncMessageHandler is a blocking call which synchronously handles all messages except ControMsgType types. Messages gets routed by invoking SendSyncMessage.
 	DefaultSyncMessageHandler(context.Context, interface{}) error
 
-	// Callback could be used to register a callback function to receive state/stage notifications from a component. All registered callback functions would be
-	// maintained within a function slice. Any time a callback function is registered with isHead = false would get appended to end of the function slice. While
-	// a registration made with isHead = true, would result in the callback function getting added to index 0 (head) of the function slice and shifting any existing
-	// functions by 1 index. Repeated adds with isHead = true would be like adding to head of a LIFO stack.
+	// Callback could be used to register a callback function to receive ChangeObject notifications from a component. Notifications could be State, Stage or immutable Component
+	// copies. All registered callback functions would be maintained within a function slice. Any time a callback function is registered with isHead = false would get appended
+	// to end of the function slice. While a registration made with isHead = true, would result in the callback function getting added to index 0 (head) of the function slice
+	// and shifting any existing functions by 1 index. Repeated adds with isHead = true would be like adding to head of a LIFO stack.
 	//
 	// Note that the registered callback functions would be sent notifications prior to any subscribers, by iterating across the function slice and executing each
 	// function sequentially with a timeout conveyed within the context parameter. function slice index is also passed as a parameter which could be used to
 	// de-register the callback function.
 	// Callback functions could be registered in this manner, thereby maintaining order of execution to process a notification across components.
-	Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error
+	Callback(isHead bool, callback func(ctx context.Context, cbIndx int, changeObject ChangeObject)) error
 	RemoveCallback(cbIndx int) error
-	invokeCallbacks(notification interface{})
+	invokeCallbacks(changeObject ChangeObject)
 
-	// Subscribers could pass a channel to receive state/stage notifications of components it might be interested.
+	// Subscribers could pass a channel to receive ChangeObject notifications of components it might be interested. Notifications could be State, Stage or immutable Component
+	// copies.
+	//
 	// Note that the callback functions registered using the Callback method would be sent notifications prior to any subscribers.
-	Subscribe(subscriber string, subscriberCh chan<- interface{}) error
+	Subscribe(subscriber string, subscriberCh chan<- ChangeObject) error
 	Unsubscribe(subscriber string) error
-	notifySubscribers(notification interface{})
+	notifySubscribers(notification ChangeObject)
 
 	getMmux() chan func() (ctx context.Context, msgType interface{}, msgsLookup map[interface{}]interface{}, errCh chan<- error)
 
@@ -158,8 +160,11 @@ type Component interface {
 	setEtag(string)
 	GetEtag() string
 
-	setTypeCache([]byte)
-	getTypeCache() []byte
+	setPersistanceCache([]byte)
+	getPersistanceCache() []byte
+
+	setComponentCache(Component)
+	getComponentCache() Component
 
 	fmt.Stringer
 	http.Handler
@@ -175,7 +180,9 @@ type SimpleComponent struct {
 	Etag string `json:"etag" hash:"ignore"`
 	hash uint64
 	// type cache maintained for persistence
-	typeCache []byte
+	persistanceCache []byte
+	// component cache maintained for component message processing
+	componentCache Component
 
 	Name            string `json:"name"`
 	uri             string
@@ -199,8 +206,8 @@ type SimpleComponent struct {
 	// simple type to enforce atomic access within functions.primarily used in getStateTransitionLock function
 	stateAtomicCAS atomic.Bool `json:"-" hash:"ignore"`
 
-	subscribers map[string]chan<- interface{}
-	callbacks   []func(context.Context, int, interface{})
+	subscribers map[string]chan<- ChangeObject
+	callbacks   []func(context.Context, int, ChangeObject)
 
 	logger *zap.Logger
 }
@@ -217,12 +224,21 @@ func (d *SimpleComponent) GetURI() string {
 	return d.uri
 }
 
-func (d *SimpleComponent) setTypeCache(typeCache []byte) {
-	d.typeCache = typeCache
+func (d *SimpleComponent) setPersistanceCache(persistType []byte) {
+	d.persistanceCache = persistType
 }
 
-func (d *SimpleComponent) getTypeCache() []byte {
-	return d.typeCache
+func (d *SimpleComponent) getPersistanceCache() []byte {
+	return d.persistanceCache
+}
+
+func (d *SimpleComponent) setComponentCache(compCopy Component) {
+	d.componentCache = compCopy
+}
+
+func (d *SimpleComponent) getComponentCache() Component {
+	return d.componentCache
+
 }
 
 func (d *SimpleComponent) preInit() {
@@ -258,12 +274,14 @@ func (d *SimpleComponent) String() string {
 
 func (d *SimpleComponent) setStage(s stage) {
 	d.getstateTransitionLock().Lock()
-	d.GetLogger().Debug("stage transition", zap.Any("stage", s))
+	stageChange := StageChangeObject{}
+	stageChange.prevObj, stageChange.currObj = d.Stage, s
+	d.GetLogger().Debug("stage transition", zap.Any("stage", stageChange))
 	d.Stage = s
 	d.getstateTransitionLock().Unlock()
 
-	d.invokeCallbacks(s)
-	d.notifySubscribers(s)
+	d.invokeCallbacks(stageChange)
+	d.notifySubscribers(stageChange)
 
 	if d.Stage >= Initialized && d.Stage <= Started {
 		d.setState(Active)
@@ -281,9 +299,11 @@ func (d *SimpleComponent) setState(s state) {
 	d.State = s
 
 	if d.State != prevState {
-		d.GetLogger().Info("state transition", zap.Any("state", s))
-		d.invokeCallbacks(d.State)
-		d.notifySubscribers(d.State)
+		stateChange := StateChangeObject{}
+		stateChange.prevObj, stateChange.currObj = prevState, s
+		d.GetLogger().Info("state transition", zap.Any("state", stateChange))
+		d.invokeCallbacks(stateChange)
+		d.notifySubscribers(stateChange)
 	}
 }
 
@@ -317,13 +337,13 @@ func (d *SimpleComponent) IsNonRestEntity() bool {
 	return d.isNonRestEntity
 }
 
-func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, notification interface{})) error {
+func (d *SimpleComponent) Callback(isHead bool, callback func(ctx context.Context, cbIndx int, changeObj ChangeObject)) error {
 	if d.Stage > Started {
 		return fmt.Errorf("unable to add callback since %v is %v", d.GetName(), d.Stage)
 	}
 
 	if isHead {
-		d.callbacks = append([]func(ctx context.Context, cbIndx int, notification interface{}){callback}, d.callbacks...)
+		d.callbacks = append([]func(ctx context.Context, cbIndx int, change ChangeObject){callback}, d.callbacks...)
 	} else {
 		d.callbacks = append(d.callbacks, callback)
 	}
@@ -340,9 +360,9 @@ func (d *SimpleComponent) RemoveCallback(cbIndx int) error {
 	return nil
 }
 
-func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- interface{}) error {
+func (d *SimpleComponent) Subscribe(subscriber string, subscriberCh chan<- ChangeObject) error {
 	if d.subscribers == nil {
-		d.subscribers = make(map[string]chan<- interface{})
+		d.subscribers = make(map[string]chan<- ChangeObject)
 	}
 
 	if _, found := d.subscribers[subscriber]; found {
@@ -368,13 +388,13 @@ func (d *SimpleComponent) Unsubscribe(subscriber string) error {
 	return nil
 }
 
-func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
+func (d *SimpleComponent) invokeCallbacks(changeObject ChangeObject) {
 	if len(d.callbacks) <= 0 {
 		return
 	}
 
 	// make a copy of callback functions and iterate over the copied function slice, in case the callback function removes itself from the callback function slice
-	callbackFuncs := make([]func(context.Context, int, interface{}), len(d.callbacks))
+	callbackFuncs := make([]func(context.Context, int, ChangeObject), len(d.callbacks))
 	copy(callbackFuncs, d.callbacks)
 
 	for cbIndx, callbackFunc := range callbackFuncs {
@@ -382,7 +402,7 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 
 		go func() {
-			callbackFunc(ctx, cbIndx, notification)
+			callbackFunc(ctx, cbIndx, changeObject)
 			cancel()
 		}()
 
@@ -391,14 +411,14 @@ func (d *SimpleComponent) invokeCallbacks(notification interface{}) {
 		<-ctx.Done()
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
-			d.GetLogger().Info("callback exceeded notification deadline", zap.Int("index", cbIndx), zap.Any("notification", notification))
+			d.GetLogger().Info("callback exceeded notification deadline", zap.Int("index", cbIndx), zap.Any("notification", changeObject))
 		case context.Canceled:
-			d.GetLogger().Debug("callback executed", zap.Int("index", cbIndx), zap.Any("notification", notification))
+			d.GetLogger().Debug("callback executed", zap.Int("index", cbIndx), zap.Any("notification", changeObject))
 		}
 	}
 }
 
-func (d *SimpleComponent) notifySubscribers(notification interface{}) {
+func (d *SimpleComponent) notifySubscribers(notification ChangeObject) {
 	for _, subsCh := range d.subscribers {
 		subsCh <- notification
 	}
