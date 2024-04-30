@@ -41,7 +41,7 @@ func init() {
 		close(signalCh)
 		signalCh = nil
 
-		subscribe := make(chan interface{}, 1)
+		subscribe := make(chan ChangeObject, 1)
 		defer close(subscribe)
 		rootContainer.Subscribe("root.init", subscribe)
 
@@ -64,11 +64,14 @@ func init() {
 		}()
 
 		for notification := range subscribe {
-			if notification == Stopped {
-				rootContainer.GetLogger().Sugar().Info("exiting")
-				// syscall.SIGUSR1 is used for testing
-				if osSignal != syscall.SIGUSR1 {
-					os.Exit(0)
+			switch changeObj := notification.(type) {
+			case StageChangeObject:
+				if changeObj.GetCurrentObject() == Stopped {
+					rootContainer.GetLogger().Sugar().Info("exiting")
+					// syscall.SIGUSR1 is used for testing
+					if osSignal != syscall.SIGUSR1 {
+						os.Exit(0)
+					}
 				}
 			}
 		}
@@ -445,9 +448,17 @@ func (c *Container) startMmux(ctx context.Context, comp Component) {
 				errCh <- err
 				continue
 			}
+			prevCompObj := comp.getComponentCache()
+			if prevCompObj == nil {
+				prevCompObj = cCopy
+			}
 
-			comp.invokeCallbacks(cCopy)
-			comp.notifySubscribers(cCopy)
+			changeObj := ComponentChangeObject{}
+			changeObj.prevObj, changeObj.currObj = prevCompObj, cCopy
+			comp.setComponentCache(cCopy)
+
+			comp.invokeCallbacks(changeObj)
+			comp.notifySubscribers(changeObj)
 		}
 		errCh <- err
 	}
@@ -470,12 +481,12 @@ func (c *Container) persist(ctx context.Context, comp Component) error {
 		return fmt.Errorf("unable to convert PTypes to []byte while persisting, due to: %s", err)
 	}
 
-	// compare existing component type cache before persisting
-	if bytes.Equal(pTypesBytes, comp.getTypeCache()) {
+	// compare existing component persistence cache before persisting
+	if bytes.Equal(pTypesBytes, comp.getPersistanceCache()) {
 		return nil
 	}
 
-	comp.setTypeCache(pTypesBytes)
+	comp.setPersistanceCache(pTypesBytes)
 
 	ctx = ContextWithLogger(ctx, comp.GetLogger())
 	if noSqlDB, isNoSqlDB := interface{}(c.persistence.DB).(NoSQLDB); isNoSqlDB {
@@ -736,17 +747,19 @@ func validateName(comp Component) error {
 	return nil
 }
 
-func stateChangeCallbacker(comp Component) func(context.Context, int, interface{}) {
-	return func(ctx context.Context, cbIndx int, notification interface{}) {
+func stateChangeCallbacker(comp Component) func(context.Context, int, ChangeObject) {
+	return func(ctx context.Context, cbIndx int, notification ChangeObject) {
 		comp.GetLogger().Debug("stateChangeCallbacker", zap.Any("notification", notification))
-		switch notification {
-		case Active, Inactive:
+		switch changeType := notification.(type) {
+		case StateChangeObject:
 			comp.GetLogger().Debug("proceeding to set new ETag")
 			UpdateComponentEtag(comp)
-		case Stopping:
-			err := comp.RemoveCallback(cbIndx)
-			if err != nil {
-				comp.GetLogger().Error("error while removing callback", zap.Error(err))
+		case StageChangeObject:
+			if changeType.GetCurrentObject() == Stopping {
+				err := comp.RemoveCallback(cbIndx)
+				if err != nil {
+					comp.GetLogger().Error("error while removing callback", zap.Error(err))
+				}
 			}
 		default:
 		}
