@@ -1,4 +1,4 @@
-//go:build http
+////go:build http
 
 package addons
 
@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	. "github.com/srcfoundry/kinesis/component"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -58,7 +60,7 @@ func (h *HttpServer) Init(ctx context.Context) error {
 }
 
 func (h *HttpServer) Start(ctx context.Context) error {
-	h.router.PathPrefix("/").HandlerFunc(httpHandlerFunc(h.GetContainer()))
+	h.router.PathPrefix("/").HandlerFunc(httpHandlerFunc(ctx, h.GetContainer()))
 
 	addr := "0.0.0.0:"
 	if len(h.HttpPort) <= 0 {
@@ -86,13 +88,53 @@ func (h *HttpServer) Stop(ctx context.Context) error {
 	return h.server.Shutdown(ctx)
 }
 
-func httpHandlerFunc(c *Container) func(w http.ResponseWriter, r *http.Request) {
+func httpHandlerFunc(ctx context.Context, c *Container) http.HandlerFunc {
+	logger := LoggerFromContext(ctx)
+	if c == nil {
+		logger.Error("encountered nil container")
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		httpHandler := c.GetHttpHandler(r.URL.Path)
 		if httpHandler != nil {
-			httpHandler(w, r)
+			traceMiddleware(ctx, httpHandler)(w, r)
 			return
 		}
 		http.NotFound(w, r)
 	}
+}
+
+// Middleware to check for traceId and inject if missing
+func traceMiddleware(ctx context.Context, next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger := LoggerFromContext(ctx)
+
+		traceID := ""
+		// Check headers for trace ID. header.Get() assumes keys stored in canonicalized form, thus case insensitive.
+		for _, header := range []string{"TraceID", "Trace-ID"} {
+			traceID = r.Header.Get(header)
+			if len(traceID) > 0 {
+				break
+			}
+		}
+
+		// Check if the traceId is present in the incoming request
+		if traceID == "" {
+			// Generate a new traceId if not present
+			traceID = uuid.New().String()
+			logger.Debug("generated new traceId", zap.String("traceID", traceID))
+		} else {
+			logger.Debug("found existing traceId", zap.String("traceID", traceID))
+		}
+
+		// pass traceId in the context for use in handlers or downstream calls
+		ctx := context.WithValue(r.Context(), TraceID, traceID)
+		r = r.WithContext(ctx)
+
+		// Add the traceId to the response headers as well (optional)
+		w.Header().Set("traceId", traceID)
+
+		// Call the next handler in the chain
+		next.ServeHTTP(w, r)
+	})
 }
