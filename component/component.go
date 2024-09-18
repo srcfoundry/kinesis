@@ -25,6 +25,12 @@ const (
 	ComponentMsgType MsgType = "ComponentMsgType" // ComponentMsgType to classify any Component type being passed
 )
 
+type ContextType struct{}
+
+var (
+	TraceID ContextType
+)
+
 type (
 	stage      int
 	state      int
@@ -561,10 +567,10 @@ func (d *SimpleComponent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *SimpleComponent) GetLogger() *zap.Logger {
-	if d.logger != nil {
-		return d.logger
+	if d.logger == nil {
+		return logger
 	}
-	return logger
+	return d.logger
 }
 
 func (d *SimpleComponent) setLogger(logger *zap.Logger) {
