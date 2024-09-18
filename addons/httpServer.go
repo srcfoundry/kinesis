@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	. "github.com/srcfoundry/kinesis/component"
-	"go.uber.org/zap"
 )
 
 func init() {
@@ -96,19 +95,22 @@ func httpHandlerFunc(ctx context.Context, c *Container) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		httpHandler := c.GetHttpHandler(r.URL.Path)
-		if httpHandler != nil {
-			traceMiddleware(ctx, httpHandler)(w, r)
+		if httpHandler == nil {
+			http.NotFound(w, r)
 			return
 		}
-		http.NotFound(w, r)
+
+		// more http middlewares would be added here
+		for _, nxtChainedHandler := range []func(http.HandlerFunc) http.HandlerFunc{traceMiddleware} {
+			httpHandler = nxtChainedHandler(httpHandler)
+		}
+		httpHandler(w, r)
 	}
 }
 
-// Middleware to check for traceId and inject if missing
-func traceMiddleware(ctx context.Context, next http.HandlerFunc) http.HandlerFunc {
+// Middleware to check for traceId and inject one if missing
+func traceMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger := LoggerFromContext(ctx)
-
 		traceID := ""
 		// Check headers for trace ID. header.Get() assumes keys stored in canonicalized form, thus case insensitive.
 		for _, header := range []string{"TraceID", "Trace-ID"} {
@@ -122,9 +124,6 @@ func traceMiddleware(ctx context.Context, next http.HandlerFunc) http.HandlerFun
 		if traceID == "" {
 			// Generate a new traceId if not present
 			traceID = uuid.New().String()
-			logger.Debug("generated new traceId", zap.String("traceID", traceID))
-		} else {
-			logger.Debug("found existing traceId", zap.String("traceID", traceID))
 		}
 
 		// pass traceId in the context for use in handlers or downstream calls
