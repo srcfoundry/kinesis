@@ -651,9 +651,7 @@ func (c *Container) Stop(ctx context.Context) error {
 	return nil
 }
 
-// GetComponent returns a copy of the component within a container. Only exported field values would be copied over. Advisable not to mark pointer
-// fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
-// be copied over.
+// GetComponent returns the component within a container.
 func (c *Container) GetComponent(name string) (Component, error) {
 	c.getMutatingLock().RLock()
 	defer c.getMutatingLock().RUnlock()
@@ -672,6 +670,17 @@ func (c *Container) GetComponent(name string) (Component, error) {
 		return nil, errors.New("unable to find component type within cComponent")
 	}
 
+	return comp, nil
+}
+
+// GetComponentCopy returns the copy of component within a container. Only exported field values would be copied over. Advisable not to mark pointer
+// fields within a component as an exported field. Reference types such as slice, map, channel, interface, and function types which are exported would
+// be copied over.
+func (c *Container) GetComponentCopy(name string) (Component, error) {
+	comp, err := c.GetComponent(name)
+	if err != nil {
+		return nil, err
+	}
 	return createCopy(comp)
 }
 
