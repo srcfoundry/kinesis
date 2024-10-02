@@ -16,6 +16,11 @@ import (
 
 func shutdownTestContainer(c *Container, delay time.Duration) {
 	subscribe, errCh := make(chan ChangeObject, 1), make(chan error, 1)
+	defer func() {
+		close(errCh)
+		close(subscribe)
+	}()
+
 	c.Subscribe("testS", subscribe)
 
 	go func() {
@@ -28,6 +33,7 @@ outer:
 	for {
 		select {
 		case notification := <-subscribe:
+			logger.Info("received notification :::::  " + notification.String())
 			switch changeObj := notification.(type) {
 			case StageChangeObject:
 				if changeObj.GetCurrentObject() == Stopped {
@@ -126,7 +132,7 @@ func TestContainer_GetComponentCopy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := c.GetComponent(tt.args.name)
+			got, err := c.GetComponentCopy(tt.args.name)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Container.GetComponentCopy() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -179,7 +185,7 @@ func TestContainer_NotifyValidComponentCopy(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	newCompCopy, _ := c.GetComponent(testComponentName)
+	newCompCopy, _ := c.GetComponentCopy(testComponentName)
 
 	tests := []struct {
 		name    string
@@ -231,7 +237,7 @@ func TestContainer_NotifyInvalidComponentCopy(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	newCompCopy, _ := c.GetComponent(testComponentName)
+	newCompCopy, _ := c.GetComponentCopy(testComponentName)
 	// overwrite Etag
 	newCompCopy.setEtag("cafebeet")
 
