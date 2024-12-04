@@ -608,6 +608,72 @@ func TestContainer_AddRestartableComponent(t *testing.T) {
 	shutdownTestContainer(c, 5*time.Second)
 }
 
+type TestRestartableSimpleType2 struct {
+	TestRestartableSimpleType
+}
+
+func TestContainer_MonitorRestartableComponentStages(t *testing.T) {
+	c := &Container{}
+	c.Name = "testContainer"
+	c.Add(c)
+
+	restartableComponent := &TestRestartableSimpleType2{}
+	restartableComponent.Name = "restartableTestComponentToo"
+
+	changeObjectCh := make(chan ChangeObject, 1)
+	restartableComponent.Subscribe("monitorStages", changeObjectCh)
+	defer restartableComponent.Unsubscribe("monitorStages")
+
+	// initialize a slice to record the stages
+	stages := []stage{}
+
+	go func() {
+		for changeObj := range changeObjectCh {
+			if stageChangeObject, ok := changeObj.(StageChangeObject); ok {
+				prevStage, currStage := stageChangeObject.prevObj, stageChangeObject.currObj
+				if len(stages) <= 0 {
+					stages = append(stages, prevStage)
+				}
+				prevStoredStage := stages[len(stages)-1]
+				if prevStoredStage == prevStage {
+					stages = append(stages, currStage)
+				}
+			}
+		}
+	}()
+
+	c.Add(restartableComponent)
+
+	time.Sleep(3 * time.Second)
+
+	type args struct {
+		stages []stage
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{
+			name: "MonitorRestartableComponentStages",
+			args: args{
+				stages: []stage{Submitted, Preinitializing, Preinitialized, Initializing, Initialized, Starting, Started, Restarting, Starting, Started},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i, nxtStage := range tt.args.stages {
+				if nxtStage != stages[i] {
+					t.Errorf("Wanted stage %v, got %v", nxtStage, stages[i])
+				}
+			}
+		})
+	}
+
+	shutdownTestContainer(c, 5*time.Second)
+}
+
 func TestContainer_HandleInterrupt(t *testing.T) {
 	c := &Container{}
 	c.Name = "testContainer"
